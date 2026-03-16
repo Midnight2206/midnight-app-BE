@@ -1,0 +1,1031 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "library"
+  output     = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+//////////////////////////////////////////////////////
+// USER
+//////////////////////////////////////////////////////
+model User {
+  id         String    @id @default(uuid())
+  email      String    @unique
+  username   String    @unique
+  password   String
+  unitId     Int
+  isActive   Boolean   @default(true)
+  verifiedAt DateTime?
+  deletedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  military                      Military?
+  profile                       Profile?
+  tokens                        RefreshToken[]
+  roles                         UserRole[]
+  importBatches                 ImportBatch[]
+  unit                          Unit                      @relation(fields: [unitId], references: [id])
+  accountAuditLogsAsActor       AccountAuditLog[]         @relation("AccountAuditActor")
+  accountAuditLogsAsTarget      AccountAuditLog[]         @relation("AccountAuditTarget")
+  registrationPeriodsCreated    SizeRegistrationPeriod[]  @relation("RegistrationPeriodCreatedBy")
+  registrationPeriodsUpdated    SizeRegistrationPeriod[]  @relation("RegistrationPeriodUpdatedBy")
+  registrationRequestsSubmitted SizeRegistrationRequest[] @relation("RegistrationRequestSubmittedBy")
+  registrationRequestsReviewed  SizeRegistrationRequest[] @relation("RegistrationRequestReviewedBy")
+  stockAdjustments              StockAdjustmentLog[]
+  allocationIssueLogsCreated    SupplyAllocationIssueLog[]
+  allocationIssueVouchers       SupplyAllocationIssueVoucher[]
+  militaryTransferLogsCreated   MilitaryTransferLog[]
+
+  @@index([unitId])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+//////////////////////////////////////////////////////
+// ROLE & PERMISSION
+//////////////////////////////////////////////////////
+model Role {
+  id          Int              @id @default(autoincrement())
+  name        String           @unique
+  description String?
+  deletedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([deletedAt])
+}
+
+model Permission {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  roles RolePermission[]
+
+  @@index([code])
+}
+
+model UserRole {
+  userId     String
+  roleId     Int
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@unique([userId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       Int
+  permissionId Int
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+//////////////////////////////////////////////////////
+// PROFILE
+//////////////////////////////////////////////////////
+
+model Profile {
+  id     String @id @default(uuid())
+  userId String @unique
+
+  fullName                 String?
+  avatar                   String?
+  phone                    String?
+  birthday                 DateTime?
+  initialCommissioningYear Int?
+  assignedUnit             String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+//////////////////////////////////////////////////////
+// REFRESH TOKEN
+//////////////////////////////////////////////////////
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+//////////////////////////////////////////////////////
+// MILITARY
+//////////////////////////////////////////////////////
+model Military {
+  id                       String  @id @default(uuid())
+  fullname                 String
+  rank                     MilitaryRank
+  rankGroup                MilitaryRankGroup @default(HSQ_BS)
+  position                 String
+  gender                   MilitaryGender @default(MALE)
+  genderId                 Int
+  militaryCode             String  @unique
+  searchNormalized         String  @default("")
+  initialCommissioningYear Int
+  assignedUnit             String?
+  unitId                   Int
+
+  // Claim system
+  claimedByUserId String?   @unique
+  claimedAt       DateTime?
+
+  // Import tracking
+  importBatchId String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  claimedBy            User?                        @relation(fields: [claimedByUserId], references: [id])
+  importBatch          ImportBatch?                 @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  unit                 Unit                         @relation(fields: [unitId], references: [id])
+  militaryUnits        MilitaryUnit[]
+  transferRequests     MilitaryTransferRequest[]
+  yearlyRegistrations  MilitaryCategorySizeYearly[]
+  registrationRequests SizeRegistrationRequest[]
+  allocationIssueLogs  SupplyAllocationIssueLog[]
+  allocationIssueVouchers SupplyAllocationIssueVoucher[]
+  allocationSubjectMemberships MilitaryAllocationSubjectMembership[]
+  typeAssignments      MilitaryTypeAssignment[]
+  transferLogs         MilitaryTransferLog[]
+  genderCatalog        MilitaryGenderCatalog         @relation(fields: [genderId], references: [id], onDelete: Restrict)
+
+  @@index([unitId])
+  @@index([rankGroup])
+  @@index([genderId])
+  @@index([importBatchId])
+  @@index([claimedByUserId])
+  @@index([deletedAt])
+  @@index([searchNormalized])
+  @@map("militaries")
+}
+
+model MilitaryGenderCatalog {
+  id             Int      @id @default(autoincrement())
+  code           String
+  codeNormalized String   @unique
+  name           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  militaries Military[]
+
+  @@index([deletedAt])
+  @@map("military_gender_catalogs")
+}
+
+model MilitaryTypeCatalog {
+  id             Int      @id @default(autoincrement())
+  code           String
+  codeNormalized String   @unique
+  name           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  assignments      MilitaryTypeAssignment[]
+  militaryUnits    MilitaryUnit[]
+  transferRequests MilitaryTransferRequest[]
+
+  @@index([deletedAt])
+  @@map("military_type_catalogs")
+}
+
+model MilitaryTypeAssignment {
+  militaryId String
+  typeId     Int
+  assignedAt DateTime @default(now())
+
+  military Military            @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  type     MilitaryTypeCatalog @relation(fields: [typeId], references: [id], onDelete: Restrict)
+
+  @@id([militaryId, typeId])
+  @@index([typeId])
+  @@index([militaryId])
+  @@map("military_type_assignments")
+}
+
+model MilitaryUnit {
+  id              Int      @id @default(autoincrement())
+  militaryId      String
+  typeId          Int?
+  unitId          Int
+  transferInYear  Int
+  transferOutYear Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  military Military @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  type     MilitaryTypeCatalog? @relation(fields: [typeId], references: [id], onDelete: SetNull)
+  unit     Unit     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([militaryId, typeId, unitId, transferInYear])
+  @@index([militaryId])
+  @@index([typeId])
+  @@index([militaryId, typeId])
+  @@index([militaryId, typeId, transferOutYear, transferInYear])
+  @@index([militaryId, typeId, unitId, transferOutYear, transferInYear])
+  @@index([unitId])
+  @@index([unitId, transferInYear, transferOutYear])
+  @@map("military_units")
+}
+
+
+//////////////////////////////////////////////////////
+// UNIT
+//////////////////////////////////////////////////////
+
+model Unit {
+  id             Int       @id @default(autoincrement())
+  name           String    @unique
+  nameNormalized String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  militaries           Military[]
+  militaryUnits        MilitaryUnit[]
+  transferRequestsFrom MilitaryTransferRequest[] @relation("TransferFromUnit")
+  transferRequestsTo   MilitaryTransferRequest[] @relation("TransferToUnit")
+  transferLogsFrom     MilitaryTransferLog[]     @relation("TransferLogFromUnit")
+  transferLogsTo       MilitaryTransferLog[]     @relation("TransferLogToUnit")
+  users                User[]
+  registrationPeriods  SizeRegistrationPeriod[]
+  warehouses           Warehouse[]
+  allocationSubjects   SupplyAllocationSubject[]
+  allocationStandards  SupplyAllocationStandard[]
+  allocationIssueVouchers SupplyAllocationIssueVoucher[]
+
+  @@map("units")
+}
+
+model MilitaryTransferRequest {
+  id                String                 @id @default(uuid())
+  militaryId        String
+  typeId            Int
+  fromUnitId        Int
+  toUnitId          Int
+  transferYear      Int
+  note              String?
+  status            MilitaryTransferStatus @default(PENDING)
+  requestedByUserId String
+  requestedAt       DateTime               @default(now())
+  reviewedByUserId  String?
+  reviewedAt        DateTime?
+  cancelledByUserId String?
+  cancelledAt       DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  military Military @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  type     MilitaryTypeCatalog @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  fromUnit Unit     @relation("TransferFromUnit", fields: [fromUnitId], references: [id], onDelete: Cascade)
+  toUnit   Unit     @relation("TransferToUnit", fields: [toUnitId], references: [id], onDelete: Cascade)
+
+  @@index([militaryId, typeId, status])
+  @@index([militaryId, typeId, status, requestedAt])
+  @@index([fromUnitId, status])
+  @@index([fromUnitId, status, requestedAt])
+  @@index([toUnitId, status])
+  @@index([toUnitId, status, requestedAt])
+  @@map("military_transfer_requests")
+}
+
+model MilitaryTransferLog {
+  id                   String   @id @default(uuid())
+  militaryId           String
+  fromUnitId           Int?
+  fromExternalUnitName String?
+  toUnitId             Int?
+  toExternalUnitName   String?
+  transferYear         Int
+  note                 String?
+  createdByUserId      String
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  military  Military @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  fromUnit  Unit?    @relation("TransferLogFromUnit", fields: [fromUnitId], references: [id], onDelete: SetNull)
+  toUnit    Unit?    @relation("TransferLogToUnit", fields: [toUnitId], references: [id], onDelete: SetNull)
+  createdBy User     @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([militaryId, transferYear])
+  @@index([fromUnitId, transferYear])
+  @@index([toUnitId, transferYear])
+  @@index([createdByUserId, transferYear])
+  @@map("military_transfer_logs")
+}
+
+//////////////////////////////////////////////////////
+// CATEGORY
+//////////////////////////////////////////////////////
+model Category {
+  id             Int       @id @default(autoincrement())
+  name           String    @unique
+  nameNormalized String    @unique
+  code           String?   @unique
+  unitOfMeasureId Int?
+  versionId      Int?
+  colorId        Int?
+  totalQuantity  Int       @default(0)
+  isActive       Boolean   @default(true)
+  isOneSize      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  unitOfMeasure            UnitOfMeasure?                  @relation(fields: [unitOfMeasureId], references: [id], onDelete: Restrict)
+  version                  SupplyVersion?                  @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  color                    SupplyColor?                    @relation(fields: [colorId], references: [id], onDelete: Restrict)
+  variants                 CategoryVariant[]
+  sizes                    CategorySize[]
+  yearlyRegistrations      MilitaryCategorySizeYearly[]
+  registrationRequestItems SizeRegistrationRequestItem[]
+  supplyItems              SupplyItem[]
+  allocationStandards      SupplyAllocationStandard[]
+
+  @@index([unitOfMeasureId])
+  @@index([versionId])
+  @@index([colorId])
+  @@index([deletedAt])
+  @@map("categories")
+}
+
+model CategoryVariant {
+  id         Int      @id @default(autoincrement())
+  categoryId Int
+  versionId  Int
+  colorId    Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  version  SupplyVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  color    SupplyColor   @relation(fields: [colorId], references: [id], onDelete: Restrict)
+
+  warehouseStocks CategoryWarehouseStock[]
+
+  @@unique([categoryId, versionId, colorId])
+  @@index([categoryId])
+  @@index([versionId])
+  @@index([colorId])
+  @@map("category_variants")
+}
+
+//////////////////////////////////////////////////////
+// SIZE
+//////////////////////////////////////////////////////
+model Size {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  categories               CategorySize[]
+  yearlyRegistrations      MilitaryCategorySizeYearly[]
+  registrationRequestItems SizeRegistrationRequestItem[]
+
+  @@index([deletedAt])
+  @@map("sizes")
+}
+
+//////////////////////////////////////////////////////
+// CATEGORY SIZE
+//////////////////////////////////////////////////////
+model CategorySize {
+  categoryId Int
+  sizeId     Int
+  deletedAt  DateTime?
+
+  size                     Size                          @relation(fields: [sizeId], references: [id], onDelete: Cascade)
+  category                 Category                      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  yearlyRegistrations      MilitaryCategorySizeYearly[]
+  registrationRequestItems SizeRegistrationRequestItem[]
+
+  @@id([categoryId, sizeId])
+  @@map("category_sizes")
+}
+
+//////////////////////////////////////////////////////
+// MILITARY CATEGORY SIZE
+//////////////////////////////////////////////////////
+model SizeRegistrationPeriod {
+  id          Int                      @id @default(autoincrement())
+  year        Int
+  unitId      Int
+  status      RegistrationPeriodStatus @default(LOCKED)
+  openedAt    DateTime?
+  closedAt    DateTime?
+  note        String?
+  createdById String?
+  updatedById String?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  unit                Unit                         @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  createdBy           User?                        @relation("RegistrationPeriodCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy           User?                        @relation("RegistrationPeriodUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  requests            SizeRegistrationRequest[]
+  yearlyRegistrations MilitaryCategorySizeYearly[]
+
+  @@unique([year, unitId])
+  @@index([unitId, year])
+  @@index([status])
+  @@map("size_registration_periods")
+}
+
+model SizeRegistrationRequest {
+  id                String                    @id @default(uuid())
+  periodId          Int
+  year              Int
+  militaryId        String
+  submittedByUserId String
+  status            RegistrationRequestStatus @default(PENDING)
+  submitNote        String?
+  reviewNote        String?
+  reviewedByUserId  String?
+  submittedAt       DateTime                  @default(now())
+  reviewedAt        DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  period              SizeRegistrationPeriod        @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  military            Military                      @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  submittedBy         User                          @relation("RegistrationRequestSubmittedBy", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  reviewedBy          User?                         @relation("RegistrationRequestReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  items               SizeRegistrationRequestItem[]
+  yearlyRegistrations MilitaryCategorySizeYearly[]
+
+  @@index([year, status])
+  @@index([periodId, status])
+  @@index([periodId])
+  @@index([militaryId, year])
+  @@index([submittedByUserId])
+  @@map("size_registration_requests")
+}
+
+model SizeRegistrationRequestItem {
+  id         String   @id @default(uuid())
+  requestId  String
+  categoryId Int
+  sizeId     Int
+  createdAt  DateTime @default(now())
+
+  request      SizeRegistrationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  category     Category                @relation(fields: [categoryId], references: [id])
+  size         Size                    @relation(fields: [sizeId], references: [id])
+  categorySize CategorySize            @relation(fields: [categoryId, sizeId], references: [categoryId, sizeId])
+
+  @@unique([requestId, categoryId])
+  @@index([requestId])
+  @@map("size_registration_request_items")
+}
+
+model MilitaryCategorySizeYearly {
+  id         String             @id @default(uuid())
+  periodId   Int
+  year       Int
+  militaryId String
+  categoryId Int
+  sizeId     Int
+  source     RegistrationSource @default(APPROVED_REQUEST)
+  requestId  String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  deletedAt  DateTime?
+
+  period       SizeRegistrationPeriod   @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  military     Military                 @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  category     Category                 @relation(fields: [categoryId], references: [id])
+  size         Size                     @relation(fields: [sizeId], references: [id])
+  categorySize CategorySize             @relation(fields: [categoryId, sizeId], references: [categoryId, sizeId])
+  request      SizeRegistrationRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+
+  @@unique([year, militaryId, categoryId])
+  @@index([periodId, militaryId])
+  @@index([requestId])
+  @@map("military_category_size_yearly")
+}
+
+model RegistrationYearOption {
+  year      Int      @id
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+  @@map("registration_year_options")
+}
+
+model ImportBatch {
+  id          String       @id @default(uuid())
+  fileName    String
+  totalRows   Int
+  validRows   Int
+  invalidRows Int
+  status      ImportStatus
+  mode        ImportMode
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
+
+  militaries Military[]
+  errors     ImportError[]
+}
+
+model ImportError {
+  id      String      @id @default(uuid())
+  batchId String
+  batch   ImportBatch @relation(fields: [batchId], references: [id])
+
+  rowNumber Int
+  field     String?
+  message   String
+
+  createdAt DateTime @default(now())
+
+  @@index([batchId])
+}
+
+model AccountAuditLog {
+  id           String             @id @default(uuid())
+  actorUserId  String
+  targetUserId String
+  action       AccountAuditAction
+  metadata     Json?
+  createdAt    DateTime           @default(now())
+
+  actorUser  User @relation("AccountAuditActor", fields: [actorUserId], references: [id], onDelete: Cascade)
+  targetUser User @relation("AccountAuditTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  @@index([actorUserId])
+  @@index([targetUserId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("account_audit_logs")
+}
+
+enum ImportStatus {
+  PREVIEW
+  CONFIRMED
+  FAILED
+  ROLLBACK
+}
+
+enum ImportMode {
+  STRICT
+  SKIP_DUPLICATE
+  UPDATE
+}
+
+enum AccountAuditAction {
+  CREATE_ADMIN
+  ACTIVATE_ACCOUNT
+  DEACTIVATE_ACCOUNT
+  RESET_PASSWORD
+}
+
+enum RegistrationPeriodStatus {
+  OPEN
+  LOCKED
+}
+
+enum RegistrationRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum RegistrationSource {
+  IMPORT
+  MANUAL_ADMIN
+  APPROVED_REQUEST
+}
+
+enum MilitaryTransferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AllocationRuleGender {
+  ANY
+  MALE
+  FEMALE
+}
+
+enum AllocationRankGroup {
+  ANY
+  CAP_UY
+  CAP_TA
+  CAP_TUONG
+  HSQ_BS
+}
+
+enum MilitaryGender {
+  MALE
+  FEMALE
+}
+
+enum MilitaryRankGroup {
+  CAP_UY
+  CAP_TA
+  CAP_TUONG
+  HSQ_BS
+}
+
+enum MilitaryRank {
+  THIEU_UY
+  TRUNG_UY
+  THUONG_UY
+  DAI_UY
+  THIEU_TA
+  TRUNG_TA
+  THUONG_TA
+  DAI_TA
+  THIEU_TUONG
+  TRUNG_TUONG
+  THUONG_TUONG
+  DAI_TUONG
+  BINH_NHI
+  BINH_NHAT
+  HA_SI
+  TRUNG_SI
+  THUONG_SI
+}
+
+//////////////////////////////////////////////////////
+// INVENTORY
+//////////////////////////////////////////////////////
+model UnitOfMeasure {
+  id             Int       @id @default(autoincrement())
+  name           String
+  nameNormalized String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  supplyItems SupplyItem[]
+  categories  Category[]
+
+  @@index([deletedAt])
+  @@map("unit_of_measures")
+}
+
+model SupplyVersion {
+  id             Int       @id @default(autoincrement())
+  name           String
+  nameNormalized String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  supplyItems   SupplyItem[]
+  categories    Category[]
+  categoryVariants CategoryVariant[]
+
+  @@index([deletedAt])
+  @@map("versions")
+}
+
+model SupplyColor {
+  id             Int       @id @default(autoincrement())
+  name           String
+  nameNormalized String    @unique
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  supplyItems   SupplyItem[]
+  categories    Category[]
+  categoryVariants CategoryVariant[]
+
+  @@index([deletedAt])
+  @@map("colors")
+}
+
+model SupplyAllocationSubject {
+  id             Int       @id @default(autoincrement())
+  unitId         Int
+  name           String
+  nameNormalized String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  unit                 Unit                                 @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  standards            SupplyAllocationStandard[]
+  issueVouchers        SupplyAllocationIssueVoucher[]
+  militaryMemberships  MilitaryAllocationSubjectMembership[]
+  itemSubjectConditions SupplyAllocationStandardItemSubjectCondition[]
+
+  @@unique([unitId, nameNormalized])
+  @@index([unitId, deletedAt])
+  @@index([deletedAt])
+  @@map("supply_allocation_subjects")
+}
+
+model MilitaryAllocationSubjectMembership {
+  id              String   @id @default(uuid())
+  militaryId      String
+  subjectId       Int
+  transferInYear  Int
+  transferOutYear Int?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  military Military                @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  subject  SupplyAllocationSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([militaryId, subjectId, transferInYear], map: "masm_mil_sub_in_uk")
+  @@index([militaryId, subjectId, transferInYear, transferOutYear], map: "masm_mil_sub_in_out_idx")
+  @@index([subjectId, transferInYear, transferOutYear], map: "masm_sub_in_out_idx")
+  @@map("military_allocation_subject_memberships")
+}
+
+model SupplyAllocationStandard {
+  id               Int       @id @default(autoincrement())
+  unitId           Int
+  subjectId        Int
+  categoryId       Int
+  serviceLifeYears Int
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  unit     Unit                           @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  subject  SupplyAllocationSubject        @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  category Category                       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  items    SupplyAllocationStandardItem[]
+  campaignContent SupplyAllocationStandardCampaignContent?
+
+  @@index([categoryId, deletedAt])
+  @@index([unitId, deletedAt])
+  @@index([subjectId, deletedAt])
+  @@map("supply_allocation_standards")
+}
+
+model SupplyAllocationStandardItem {
+  standardId Int
+  itemId     Int
+  quantity   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  standard SupplyAllocationStandard @relation(fields: [standardId], references: [id], onDelete: Cascade)
+  item     SupplyItem               @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  rule     SupplyAllocationStandardItemRule?
+  subjectConditions SupplyAllocationStandardItemSubjectCondition[]
+  issueLogs SupplyAllocationIssueLog[]
+  voucherItems SupplyAllocationIssueVoucherItem[]
+
+  @@id([standardId, itemId])
+  @@index([itemId])
+  @@map("supply_allocation_standard_items")
+}
+
+model SupplyAllocationStandardItemRule {
+  standardId Int
+  itemId     Int
+  gender     AllocationRuleGender @default(ANY)
+  rankGroup  AllocationRankGroup  @default(ANY)
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  standardItem SupplyAllocationStandardItem @relation(fields: [standardId, itemId], references: [standardId, itemId], onDelete: Cascade)
+
+  @@id([standardId, itemId])
+  @@index([itemId])
+  @@map("supply_allocation_standard_item_rules")
+}
+
+model SupplyAllocationStandardCampaignContent {
+  standardId               Int      @id
+  content                  String   @db.Text
+  conditionField           String?  @db.VarChar(64)
+  conditionOperator        String?  @db.VarChar(16)
+  conditionIssueYearOffset Int?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  standard SupplyAllocationStandard @relation(fields: [standardId], references: [id], onDelete: Cascade)
+
+  @@map("supply_allocation_standard_campaign_contents")
+}
+
+model SupplyAllocationStandardItemSubjectCondition {
+  standardId Int
+  itemId     Int
+  subjectId  Int
+  mode       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  standardItem SupplyAllocationStandardItem @relation(fields: [standardId, itemId], references: [standardId, itemId], onDelete: Cascade, map: "sasisc_std_item_fk")
+  subject      SupplyAllocationSubject      @relation(fields: [subjectId], references: [id], onDelete: Restrict, map: "sasisc_subject_fk")
+
+  @@id([standardId, itemId, subjectId, mode])
+  @@index([subjectId], map: "sasisc_subject_idx")
+  @@map("supply_allocation_standard_item_subject_conditions")
+}
+
+model SupplyAllocationIssueLog {
+  id          String   @id @default(uuid())
+  militaryId  String
+  standardId  Int
+  itemId      Int
+  warehouseId Int?
+  voucherId   String?
+  quantity    Int
+  issuedAt    DateTime @default(now())
+  issuedYear  Int
+  createdById String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  military     Military                     @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  standardItem SupplyAllocationStandardItem @relation(fields: [standardId, itemId], references: [standardId, itemId], onDelete: Restrict)
+  warehouse    Warehouse?                   @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  voucher      SupplyAllocationIssueVoucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+  createdBy    User?                        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([militaryId, itemId, issuedAt])
+  @@index([standardId, issuedAt])
+  @@index([warehouseId, issuedAt])
+  @@index([voucherId])
+  @@index([issuedYear])
+  @@index([createdById])
+  @@map("supply_allocation_issue_logs")
+}
+
+model SupplyAllocationIssueVoucher {
+  id           String   @id @default(uuid())
+  voucherNo    String   @unique
+  unitId       Int
+  warehouseId  Int
+  militaryId   String
+  subjectId    Int
+  issuedAt     DateTime @default(now())
+  issuedYear   Int
+  note         String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  unit       Unit                     @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  warehouse  Warehouse                @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  military   Military                 @relation(fields: [militaryId], references: [id], onDelete: Restrict)
+  subject    SupplyAllocationSubject  @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  createdBy  User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  items      SupplyAllocationIssueVoucherItem[]
+  issueLogs  SupplyAllocationIssueLog[]
+
+  @@index([unitId, issuedAt])
+  @@index([warehouseId, issuedAt])
+  @@index([militaryId, issuedAt])
+  @@index([subjectId, issuedAt])
+  @@index([createdById])
+  @@map("supply_allocation_issue_vouchers")
+}
+
+model SupplyAllocationIssueVoucherItem {
+  id                 String   @id @default(uuid())
+  voucherId          String
+  standardId         Int
+  itemId             Int
+  quantity           Int
+  itemName           String
+  itemCode           String?
+  unitOfMeasureName  String?
+  categoryName       String?
+  serviceLifeYears   Int
+  createdAt          DateTime @default(now())
+
+  voucher      SupplyAllocationIssueVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  standardItem SupplyAllocationStandardItem @relation(fields: [standardId, itemId], references: [standardId, itemId], onDelete: Restrict)
+
+  @@index([voucherId])
+  @@index([standardId, itemId])
+  @@map("supply_allocation_issue_voucher_items")
+}
+
+model Warehouse {
+  id              Int       @id @default(autoincrement())
+  unitId          Int
+  name            String
+  nameNormalized  String
+  isSystemDefault Boolean   @default(false)
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  unit             Unit                 @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  stockAdjustments StockAdjustmentLog[]
+  allocationIssueLogs SupplyAllocationIssueLog[]
+  allocationIssueVouchers SupplyAllocationIssueVoucher[]
+  categoryWarehouseStocks  CategoryWarehouseStock[]
+
+  @@unique([unitId, nameNormalized])
+  @@index([unitId, deletedAt])
+  @@index([deletedAt])
+  @@map("warehouses")
+}
+
+model SupplyItem {
+  id              Int       @id @default(autoincrement())
+  name            String
+  nameNormalized  String    @unique
+  code            String?   @unique
+  categoryId      Int
+  unitOfMeasureId Int
+  versionId       Int?
+  colorId         Int?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  category                Category                       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  unitOfMeasure           UnitOfMeasure                  @relation(fields: [unitOfMeasureId], references: [id], onDelete: Restrict)
+  version                 SupplyVersion?                 @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  color                   SupplyColor?                   @relation(fields: [colorId], references: [id], onDelete: Restrict)
+  stockAdjustments        StockAdjustmentLog[]
+  allocationStandardItems SupplyAllocationStandardItem[]
+
+  @@index([categoryId, deletedAt])
+  @@index([unitOfMeasureId])
+  @@index([versionId])
+  @@index([colorId])
+  @@map("supply_items")
+}
+
+model CategoryWarehouseStock {
+  warehouseId Int
+  variantId   Int
+  quantity    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  warehouse Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  variant   CategoryVariant @relation(fields: [variantId], references: [id], onDelete: Restrict)
+
+  @@id([warehouseId, variantId])
+  @@index([variantId])
+  @@map("category_warehouse_stocks")
+}
+
+model StockAdjustmentLog {
+  id             String   @id @default(uuid())
+  warehouseId    Int
+  itemId         Int
+  quantityBefore Int
+  delta          Int
+  quantityAfter  Int
+  note           String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  warehouse Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  item      SupplyItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  createdBy User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([warehouseId, createdAt])
+  @@index([itemId, createdAt])
+  @@index([createdById])
+  @@map("stock_adjustment_logs")
+}

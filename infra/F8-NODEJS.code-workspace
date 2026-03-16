@@ -1,0 +1,16 @@
+{
+  "folders": [
+	{
+		"path": ".."
+	},
+	{
+		"path": "../../frontend-f8-nodejs"
+	},
+	{
+		"path": "../../f8-BE-day2"
+	}
+],
+  "settings": {
+    "prisma.pinToPrisma6": false
+  }
+}

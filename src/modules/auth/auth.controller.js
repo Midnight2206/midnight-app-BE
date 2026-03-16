@@ -1,0 +1,174 @@
+import authService from "#src/services/auth.service.js";
+import { HTTP_CODES } from "#src/constants.js";
+class AuthController {
+  _setCookies(res, accessToken, refreshToken) {
+    // set access token cookie
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // dev cross-origin
+      maxAge: 15 * 60 * 1000, // 15 phút
+    });
+
+    // set refresh token cookie
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // dev cross-origin
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+    });
+  }
+  _clearCookies(res) {
+    res.clearCookie("accessToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    });
+    res.clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    });
+  }
+  login = async (req, res) => {
+    const { identifier, password } = req.body;
+    const userAgent = req.get("User-Agent") || "";
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress ||
+      "";
+    const result = await authService.login({
+      identifier,
+      password,
+      userAgent,
+      ip,
+    });
+    const { user, accessToken, refreshToken } = result;
+    this._setCookies(res, accessToken, refreshToken);
+    return res.success({
+      data: { user },
+      message: "Login successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+  register = async (req, res) => {
+    const { email, password, username, militaryCode } = req.body;
+    const userAgent = req.get("User-Agent") || "";
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress ||
+      "";
+    const result = await authService.register({
+      email,
+      password,
+      username,
+      militaryCode,
+      userAgent,
+      ip,
+    });
+    const { user, accessToken, refreshToken } = result;
+    this._setCookies(res, accessToken, refreshToken);
+    return res.success({
+      data: { user },
+      message: "User registered successfully",
+      statusCode: HTTP_CODES.CREATED,
+    });
+  };
+  getCurrentUser = async (req, res) => {
+    const userId = req.user.id;
+    const user = await authService.getCurrentUser(userId);
+    return res.success({
+      data: {
+        user,
+      },
+      message: "Get current user successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+  refresh = async (req, res) => {
+    const refreshToken = req.cookies?.refreshToken;
+
+    const userAgent = req.get("User-Agent") || "";
+    const ip =
+      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
+      req.socket.remoteAddress ||
+      "";
+
+    const { accessToken, refreshToken: newRefreshToken } =
+      await authService.refreshToken({
+        refreshToken,
+        userAgent,
+        ip,
+      });
+
+    this._setCookies(res, accessToken, newRefreshToken);
+
+    return res.success({
+      message: "Refresh token successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+  logout = async (req, res) => {
+    const refreshToken = req.cookies?.refreshToken;
+    await authService.logout(refreshToken);
+    this._clearCookies(res);
+    return res.success({
+      message: "Logout successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  requestVerifyEmail = async (req, res) => {
+    const userId = req.user.id;
+    const requestOrigin = req.get("origin") || "";
+
+    const result = await authService.requestVerifyEmail({
+      userId,
+      requestOrigin,
+    });
+
+    return res.success({
+      data: result,
+      message: result.alreadyVerified
+        ? "Email already verified"
+        : result.queued
+          ? "Verify email request queued"
+          : "Verify email request throttled",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  confirmVerifyEmail = async (req, res) => {
+    const { token } = req.query;
+
+    const result = await authService.confirmVerifyEmail({
+      token,
+    });
+
+    return res.success({
+      data: result,
+      message: result.alreadyVerified
+        ? "Email already verified"
+        : "Email verified successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  testVerifyEmail = async (req, res) => {
+    const requestOrigin = req.get("origin") || "";
+    const { to } = req.body || {};
+
+    const result = await authService.testVerifyEmailDelivery({
+      actor: req.user,
+      toEmail: to,
+      requestOrigin,
+    });
+
+    return res.success({
+      data: result,
+      message: "Test verify email sent",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+}
+export default new AuthController();
