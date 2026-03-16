@@ -2,11 +2,18 @@ import { prisma } from "#configs/prisma.config.js";
 import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import { assertSizeRegistrationAccess, parseInteger } from "#services/militaries/common.js";
+import { buildMilitarySearchNormalized } from "#utils/searchNormalizer.js";
 import {
   ensureNoOverlapTransfer,
   findUnitOrThrow,
 } from "#services/militaries/transfer.shared.js";
-import { getAssignmentByYear } from "#services/militaries/unit-history.js";
+import {
+  analyzeAssignmentHistory,
+  findClosedAssignmentByYear,
+  listAssignmentHistory,
+} from "#services/militaries/unit-history.js";
+import { getMilitaryRankLabel } from "#services/militaries/profile-reference.js";
+import { resolveAssignedUnitNameOrThrow } from "#services/militaries/assigned-unit.js";
 
 export async function createCutTransferRequest({
   actor,
@@ -21,7 +28,6 @@ export async function createCutTransferRequest({
   const parsedToUnitId = parseInteger(toUnitId, "toUnitId");
   const parsedTransferYear = parseInteger(transferYear, "transferYear");
   const normalizedNote = String(note || "").trim() || null;
-  const currentYear = new Date().getFullYear();
 
   if (parsedToUnitId === actorUnitId) {
     throw new AppError({
@@ -38,14 +44,13 @@ export async function createCutTransferRequest({
       fieldName: "toUnitId",
     });
 
-    const [activeAssignment, military] = await Promise.all([
-      getAssignmentByYear({
+    const [assignmentHistory, military] = await Promise.all([
+      listAssignmentHistory({
         db: tx,
         militaryId,
         typeId: parsedTypeId,
-        year: currentYear,
-        strictEnd: true,
         includeUnit: true,
+        scopeUnitId: actorUnitId,
       }),
       tx.military.findFirst({
         where: {
@@ -59,6 +64,14 @@ export async function createCutTransferRequest({
         },
       }),
     ]);
+    const assignmentAnalysis = analyzeAssignmentHistory({
+      assignments: assignmentHistory,
+      year: parsedTransferYear,
+      typeId: parsedTypeId,
+      scopeUnitId: actorUnitId,
+      strictEnd: true,
+    });
+    const activeAssignment = assignmentAnalysis.includeAssignment;
 
     if (!activeAssignment || !military) {
       throw new AppError({
@@ -73,6 +86,14 @@ export async function createCutTransferRequest({
         message: "Bạn chỉ được cắt bảo đảm quân nhân của đơn vị mình",
         statusCode: HTTP_CODES.FORBIDDEN,
         errorCode: "CUT_ASSURANCE_SCOPE_FORBIDDEN",
+      });
+    }
+
+    if (activeAssignment.transferOutYear !== null && activeAssignment.transferOutYear !== undefined) {
+      throw new AppError({
+        message: "Quân nhân đã có năm chuyển đi, không thể cắt bảo đảm thêm lần nữa",
+        statusCode: HTTP_CODES.CONFLICT,
+        errorCode: "MILITARY_ALREADY_CUT",
       });
     }
 
@@ -103,12 +124,9 @@ export async function createCutTransferRequest({
       });
     }
 
-    await tx.militaryUnit.updateMany({
+    await tx.militaryUnit.update({
       where: {
-        militaryId,
-        typeId: parsedTypeId,
-        unitId: activeAssignment.unitId,
-        transferOutYear: null,
+        id: activeAssignment.id,
       },
       data: {
         transferOutYear: parsedTransferYear,
@@ -235,9 +253,9 @@ export async function listIncomingTransferRequests({ actor }) {
   };
 }
 
-export async function acceptTransferRequest({ actor, requestId }) {
+export async function acceptTransferRequest({ actor, requestId, assignedUnitId }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
-  const currentYear = new Date().getFullYear();
+  const parsedAssignedUnitId = parseInteger(assignedUnitId, "assignedUnitId");
 
   return prisma.$transaction(async (tx) => {
     const request = await tx.militaryTransferRequest.findFirst({
@@ -257,6 +275,27 @@ export async function acceptTransferRequest({ actor, requestId }) {
             id: true,
             fullname: true,
             militaryCode: true,
+            rank: true,
+            position: true,
+            gender: true,
+            assignedUnit: true,
+            typeAssignments: {
+              where: {
+                type: {
+                  deletedAt: null,
+                },
+              },
+              select: {
+                type: {
+                  select: {
+                    code: true,
+                  },
+                },
+              },
+              orderBy: {
+                typeId: "asc",
+              },
+            },
           },
         },
       },
@@ -278,15 +317,35 @@ export async function acceptTransferRequest({ actor, requestId }) {
       });
     }
 
-    const activeAssignment = await getAssignmentByYear({
+    const assignedUnitName = await resolveAssignedUnitNameOrThrow({
+      tx,
+      assignedUnitId: parsedAssignedUnitId,
+      unitId: request.toUnitId,
+    });
+
+    const assignmentHistory = await listAssignmentHistory({
       db: tx,
       militaryId: request.militaryId,
       typeId: request.typeId,
-      year: currentYear,
+    });
+    const assignmentAnalysis = analyzeAssignmentHistory({
+      assignments: assignmentHistory,
+      year: request.transferYear,
+      typeId: request.typeId,
       strictEnd: true,
     });
+    const activeAssignment = assignmentAnalysis.includeAssignment;
 
-    if (activeAssignment) {
+    if (activeAssignment && activeAssignment.unitId === request.fromUnitId) {
+      await tx.militaryUnit.update({
+        where: {
+          id: activeAssignment.id,
+        },
+        data: {
+          transferOutYear: request.transferYear,
+        },
+      });
+    } else if (activeAssignment) {
       throw new AppError({
         message: "Quân nhân đang có đơn vị bảo đảm active, chưa thể nhận",
         statusCode: HTTP_CODES.CONFLICT,
@@ -317,6 +376,20 @@ export async function acceptTransferRequest({ actor, requestId }) {
       },
       data: {
         unitId: request.toUnitId,
+        assignedUnitId: parsedAssignedUnitId,
+        assignedUnit: assignedUnitName,
+        searchNormalized: buildMilitarySearchNormalized({
+          fullname: request.military.fullname,
+          militaryCode: request.military.militaryCode,
+          rank: `${request.military.rank} ${getMilitaryRankLabel(request.military.rank)}`,
+          position: request.military.position,
+          gender: request.military.gender,
+          type: (request.military.typeAssignments || [])
+            .map((item) => item.type?.code)
+            .filter(Boolean)
+            .join(" "),
+          assignedUnit: assignedUnitName,
+        }),
       },
     });
 
@@ -344,7 +417,6 @@ export async function acceptTransferRequest({ actor, requestId }) {
 
 export async function undoCutTransferRequest({ actor, requestId }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
-  const currentYear = new Date().getFullYear();
   const closedStatusErrors = {
     ACCEPTED: {
       message: "Đơn vị mới đã nhận bảo đảm quân trang, không thể hoàn tác",
@@ -408,26 +480,42 @@ export async function undoCutTransferRequest({ actor, requestId }) {
       });
     }
 
-    const sourceAssignment = await tx.militaryUnit.findFirst({
-      where: {
-        militaryId: request.militaryId,
-        typeId: request.typeId,
-        unitId: request.fromUnitId,
-        transferOutYear: request.transferYear,
-      },
-      orderBy: {
-        transferInYear: "desc",
-      },
-      select: {
-        id: true,
-      },
+    const assignmentHistory = await listAssignmentHistory({
+      db: tx,
+      militaryId: request.militaryId,
+      typeId: request.typeId,
+      scopeUnitId: request.fromUnitId,
     });
+    const sourceAssignment =
+      findClosedAssignmentByYear({
+        assignments: assignmentHistory,
+        year: request.transferYear,
+      }) ||
+      analyzeAssignmentHistory({
+        assignments: assignmentHistory,
+        year: request.transferYear,
+        typeId: request.typeId,
+        scopeUnitId: request.fromUnitId,
+        strictEnd: false,
+      }).showAssignment ||
+      null;
 
     if (!sourceAssignment) {
       throw new AppError({
         message: "Không tìm thấy bản ghi cắt bảo đảm để hoàn tác",
         statusCode: HTTP_CODES.CONFLICT,
         errorCode: "CUT_ASSIGNMENT_NOT_FOUND",
+      });
+    }
+
+    if (
+      sourceAssignment.transferOutYear !== null &&
+      Number(sourceAssignment.transferOutYear) !== Number(request.transferYear)
+    ) {
+      throw new AppError({
+        message: "Bản ghi nguồn không còn khớp với năm cắt của yêu cầu, không thể hoàn tác",
+        statusCode: HTTP_CODES.CONFLICT,
+        errorCode: "CUT_ASSIGNMENT_STATE_MISMATCH",
       });
     }
 

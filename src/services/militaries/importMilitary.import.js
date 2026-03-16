@@ -23,6 +23,14 @@ import {
   resolveMilitaryRankGroupFromCode,
 } from "#services/militaries/profile-reference.js";
 
+function normalizeAssignedUnitName(name) {
+  return String(name || "").normalize("NFC").trim();
+}
+
+function normalizeAssignedUnitNameForCompare(name) {
+  return normalizeAssignedUnitName(name).toLowerCase();
+}
+
 function formatYearRange(startYear, endYear) {
   return `${startYear}-${endYear ?? "nay"}`;
 }
@@ -308,6 +316,86 @@ export async function importByTemplate({
 
   const hasNormalizedColumn = await hasSearchNormalizedColumn();
   const result = await prisma.$transaction(async (tx) => {
+    const requestedAssignedUnitNames = [
+      ...new Set(
+        rows
+          .map((row) => normalizeAssignedUnitName(row.assignedUnit))
+          .filter(Boolean),
+      ),
+    ];
+
+    const requestedAssignedUnitNameByNormalized = new Map(
+      requestedAssignedUnitNames.map((name) => [normalizeAssignedUnitNameForCompare(name), name]),
+    );
+
+    const existingAssignedUnits =
+      requestedAssignedUnitNames.length > 0
+        ? await tx.militaryAssignedUnit.findMany({
+            where: {
+              unitId: scopeUnitId,
+              nameNormalized: {
+                in: [...requestedAssignedUnitNameByNormalized.keys()],
+              },
+            },
+            select: {
+              id: true,
+              name: true,
+              nameNormalized: true,
+              deletedAt: true,
+            },
+          })
+        : [];
+
+    const missingAssignedUnitNames = requestedAssignedUnitNames.filter((name) => {
+      const normalized = normalizeAssignedUnitNameForCompare(name);
+      const existed = existingAssignedUnits.find((item) => item.nameNormalized === normalized);
+      return !existed;
+    });
+
+    if (missingAssignedUnitNames.length > 0) {
+      await tx.militaryAssignedUnit.createMany({
+        data: missingAssignedUnitNames.map((name) => ({
+          unitId: scopeUnitId,
+          name,
+          nameNormalized: normalizeAssignedUnitNameForCompare(name),
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    const softDeletedAssignedUnits = existingAssignedUnits.filter((item) => item.deletedAt);
+    for (const item of softDeletedAssignedUnits) {
+      await tx.militaryAssignedUnit.update({
+        where: { id: item.id },
+        data: {
+          name: requestedAssignedUnitNameByNormalized.get(item.nameNormalized) || item.name,
+          deletedAt: null,
+        },
+      });
+    }
+
+    const assignedUnitCatalogRows =
+      requestedAssignedUnitNames.length > 0
+        ? await tx.militaryAssignedUnit.findMany({
+            where: {
+              unitId: scopeUnitId,
+              nameNormalized: {
+                in: [...requestedAssignedUnitNameByNormalized.keys()],
+              },
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              name: true,
+              nameNormalized: true,
+            },
+          })
+        : [];
+
+    const assignedUnitCatalogByNormalized = new Map(
+      assignedUnitCatalogRows.map((item) => [item.nameNormalized, item]),
+    );
+
     const uniqueGenders = [...new Set(rowsForNewMilitary.map((row) => row.gender))];
 
     const genderCatalogRows = [];
@@ -359,6 +447,16 @@ export async function importByTemplate({
             });
           }
 
+          const normalizedAssignedUnit = normalizeAssignedUnitNameForCompare(row.assignedUnit);
+          const assignedUnitCatalog = assignedUnitCatalogByNormalized.get(normalizedAssignedUnit);
+          if (!assignedUnitCatalog) {
+            throw new AppError({
+              message: `Cannot resolve assignedUnit catalog for militaryCode: ${row.militaryCode}`,
+              statusCode: HTTP_CODES.INTERNAL_SERVER_ERROR,
+              errorCode: "MILITARY_ASSIGNED_UNIT_CATALOG_MAPPING_FAILED",
+            });
+          }
+
           return {
             fullname: row.fullname,
             rank: rankCode,
@@ -376,13 +474,14 @@ export async function importByTemplate({
                     position: row.position,
                     gender: row.gender,
                     type: row.types.join(" "),
-                    assignedUnit: row.assignedUnit || unit.name,
+                    assignedUnit: assignedUnitCatalog.name,
                     unitName: unit.name,
                   }),
                 }
               : {}),
             initialCommissioningYear: row.initialCommissioningYear,
-            assignedUnit: row.assignedUnit || unit.name,
+            assignedUnitId: assignedUnitCatalog.id,
+            assignedUnit: assignedUnitCatalog.name,
             unitId: scopeUnitId,
             importBatchId: batch.id,
           };
@@ -491,17 +590,25 @@ export async function importByTemplate({
       ];
 
       if (militaryIdsNeedUpdate.length > 0) {
-        await tx.military.updateMany({
-          where: {
-            id: {
-              in: militaryIdsNeedUpdate,
+        for (const row of assignmentRows.filter((item) => item.transferOutYear === null)) {
+          const importedRow = rowsForExistingMilitaryAssignment.find(
+            (item) => item.military.id === row.militaryId && item.row.militaryCode === row.militaryCode,
+          )?.row;
+          const normalizedAssignedUnit = normalizeAssignedUnitNameForCompare(importedRow?.assignedUnit);
+          const assignedUnitCatalog = assignedUnitCatalogByNormalized.get(normalizedAssignedUnit);
+          if (!assignedUnitCatalog) continue;
+
+          await tx.military.update({
+            where: {
+              id: row.militaryId,
             },
-          },
-          data: {
-            unitId: scopeUnitId,
-            assignedUnit: unit.name,
-          },
-        });
+            data: {
+              unitId: scopeUnitId,
+              assignedUnitId: assignedUnitCatalog.id,
+              assignedUnit: assignedUnitCatalog.name,
+            },
+          });
+        }
       }
     }
 

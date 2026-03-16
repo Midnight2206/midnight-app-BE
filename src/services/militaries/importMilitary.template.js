@@ -41,7 +41,7 @@ export async function getTemplate({ type } = {}) {
       templateTypeCode || "SQ_QNCN",
       "QN0001",
       2018,
-      "Tiểu đoàn 1",
+      "Đại đội 1",
       2024,
       "",
     ],
@@ -53,7 +53,7 @@ export async function getTemplate({ type } = {}) {
       templateTypeCode || "PHI_CONG",
       "QN0002",
       2020,
-      "Tiểu đoàn 2",
+      "Đại đội 2",
       2025,
       "",
     ],
@@ -65,8 +65,8 @@ export async function getTemplate({ type } = {}) {
       templateTypeCode || "HSQ_CS",
       "QN0003",
       2023,
-      "",
-      "",
+      "Trung đội 3",
+      2023,
       "",
     ],
   ];
@@ -81,6 +81,7 @@ export async function getTemplate({ type } = {}) {
     templateTypeCode
       ? [`- type: template này cố định cho danh sách ${templateTypeCode}`]
       : ["- type: mã danh sách quân nhân, ví dụ SQ_QNCN, PHI_CONG, CAN_BO_NV_DU, HSQ_CS"],
+    ["- assignedUnit: bắt buộc, là tên assignedUnit thuộc đơn vị đang import; hệ thống sẽ tự map/tạo trong danh mục assignedUnit của đơn vị đó"],
     ["- unitTransferInYear để trống sẽ mặc định = initialCommissioningYear"],
     ["- unitTransferOutYear để trống nếu quân nhân đang còn trong đơn vị hiện tại"],
   ];

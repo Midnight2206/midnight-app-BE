@@ -2,6 +2,9 @@ import { Router } from "express";
 import militariesController from "#controllers/militaries.controller.js";
 import { validate } from "#middlewares/validateRequest.js";
 import {
+  acceptTransferRequestSchema,
+  assignedUnitIdParamSchema,
+  createAssignedUnitSchema,
   createUnitSchema,
   createRegistrationYearSchema,
   createMilitaryTypeSchema,
@@ -11,6 +14,7 @@ import {
   requestIdParamSchema,
   receiveMilitaryAssuranceSchema,
   transferMilitaryAssuranceSchema,
+  updateAssignedUnitSchema,
   updateMilitarySizeRegistrationsSchema,
 } from "#zodSchemas/military.schema.js";
 import { wrapRouter } from "#utils/wrapRouter.js";
@@ -33,6 +37,8 @@ router.get("/", militariesController.list);
 
 router.get("/units", militariesController.listUnits);
 
+router.get("/assigned-units", militariesController.listAssignedUnits);
+
 router.get("/types", militariesController.listTypes);
 
 router.post(
@@ -51,6 +57,24 @@ router.post(
   "/units",
   validate(createUnitSchema),
   militariesController.createUnit,
+);
+
+router.post(
+  "/assigned-units",
+  validate(createAssignedUnitSchema),
+  militariesController.createAssignedUnit,
+);
+
+router.put(
+  "/assigned-units/:assignedUnitId",
+  validate(updateAssignedUnitSchema),
+  militariesController.updateAssignedUnit,
+);
+
+router.delete(
+  "/assigned-units/:assignedUnitId",
+  validate(assignedUnitIdParamSchema),
+  militariesController.deleteAssignedUnit,
 );
 
 router.get("/template", militariesController.template);
@@ -132,7 +156,7 @@ router.post(
 
 router.post(
   "/transfers/:requestId/accept",
-  validate(requestIdParamSchema),
+  validate(acceptTransferRequestSchema),
   militariesController.acceptTransferRequest,
 );
 

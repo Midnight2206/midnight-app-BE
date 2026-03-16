@@ -90,6 +90,20 @@ class MilitariesController {
     });
   };
 
+  listAssignedUnits = async (req, res) => {
+    const result = await militariesService.listAssignedUnits({
+      actor: req.user,
+      unitId: req.query.unitId,
+      status: req.query.status,
+    });
+
+    return res.success({
+      data: result,
+      message: "Get military assigned units successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
   listTypes = async (req, res) => {
     const result = await militariesService.listTypes({
       actor: req.user,
@@ -138,6 +152,47 @@ class MilitariesController {
       data: result,
       message: "Create unit successfully",
       statusCode: HTTP_CODES.CREATED,
+    });
+  };
+
+  createAssignedUnit = async (req, res) => {
+    const result = await militariesService.createAssignedUnit({
+      actor: req.user,
+      body: req.body,
+    });
+
+    return res.success({
+      data: result,
+      message: "Create military assigned unit successfully",
+      statusCode: HTTP_CODES.CREATED,
+    });
+  };
+
+  updateAssignedUnit = async (req, res) => {
+    const result = await militariesService.updateAssignedUnit({
+      actor: req.user,
+      assignedUnitId: req.params.assignedUnitId,
+      body: req.body,
+    });
+
+    return res.success({
+      data: result,
+      message: "Update military assigned unit successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  deleteAssignedUnit = async (req, res) => {
+    const result = await militariesService.deleteAssignedUnit({
+      actor: req.user,
+      assignedUnitId: req.params.assignedUnitId,
+      unitId: req.query.unitId,
+    });
+
+    return res.success({
+      data: result,
+      message: "Delete military assigned unit successfully",
+      statusCode: HTTP_CODES.OK,
     });
   };
 
@@ -291,6 +346,7 @@ class MilitariesController {
     const result = await militariesService.acceptTransferRequest({
       actor: req.user,
       requestId: req.params.requestId,
+      body: req.body,
     });
 
     return res.success({

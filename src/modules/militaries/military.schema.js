@@ -6,6 +6,29 @@ export const createUnitSchema = z.object({
   }),
 });
 
+export const assignedUnitIdParamSchema = z.object({
+  params: z.object({
+    assignedUnitId: z.coerce.number().int().positive(),
+  }),
+});
+
+export const createAssignedUnitSchema = z.object({
+  body: z.object({
+    name: z.string().trim().min(1, "Tên assignedUnit là bắt buộc").max(191),
+    unitId: z.coerce.number().int().positive().optional(),
+  }),
+});
+
+export const updateAssignedUnitSchema = z.object({
+  params: z.object({
+    assignedUnitId: z.coerce.number().int().positive(),
+  }),
+  body: z.object({
+    name: z.string().trim().min(1, "Tên assignedUnit là bắt buộc").max(191),
+    unitId: z.coerce.number().int().positive().optional(),
+  }),
+});
+
 export const createMilitaryTypeSchema = z.object({
   body: z.object({
     code: z.string().trim().min(1, "code là bắt buộc").max(50),
@@ -73,6 +96,10 @@ export const transferMilitaryAssuranceSchema = z.object({
       ),
       fromExternalUnitName: z.string().trim().max(191).optional(),
       toExternalUnitName: z.string().trim().max(191).optional(),
+      assignedUnitId: z.preprocess(
+        (value) => (value === "" || value === undefined ? null : value),
+        z.union([z.coerce.number().int().positive(), z.null()]),
+      ),
       fullname: z.string().trim().max(191).optional(),
       rank: z.string().trim().max(191).optional(),
       position: z.string().trim().max(191).optional(),
@@ -102,7 +129,74 @@ export const transferMilitaryAssuranceSchema = z.object({
         message: "Đích ngoài hệ thống là bắt buộc khi không chọn đơn vị đích",
         path: ["toExternalUnitName"],
       },
-    ),
+    )
+    .superRefine((data, ctx) => {
+      const isReceiveFromExternal = data.fromUnitId === null && data.toUnitId !== null;
+      if (!isReceiveFromExternal) return;
+
+      if (!String(data.fullname || "").trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Họ tên là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["fullname"],
+        });
+      }
+
+      if (!String(data.rank || "").trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Cấp bậc là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["rank"],
+        });
+      }
+
+      if (!String(data.position || "").trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Chức vụ là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["position"],
+        });
+      }
+
+      if (!data.assignedUnitId && !String(data.assignedUnit || "").trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Assigned unit tiếp nhận là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["assignedUnitId"],
+        });
+      }
+
+      if (!data.gender) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Giới tính là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["gender"],
+        });
+      }
+
+      const hasTypeValue = Array.isArray(data.types)
+        ? data.types.some((item) => String(item || "").trim())
+        : String(data.types || data.type || "").trim().length > 0;
+      if (!hasTypeValue) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Loại quân nhân là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["type"],
+        });
+      }
+
+      if (
+        data.initialCommissioningYear === undefined ||
+        data.initialCommissioningYear === null ||
+        data.initialCommissioningYear === ""
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Năm PH, CCĐ lần đầu là bắt buộc khi tiếp nhận từ ngoài hệ thống",
+          path: ["initialCommissioningYear"],
+        });
+      }
+    }),
 });
 
 export const createCutTransferRequestSchema = z.object({
@@ -120,6 +214,15 @@ export const createCutTransferRequestSchema = z.object({
 export const requestIdParamSchema = z.object({
   params: z.object({
     requestId: z.string().trim().uuid("requestId không hợp lệ"),
+  }),
+});
+
+export const acceptTransferRequestSchema = z.object({
+  params: z.object({
+    requestId: z.string().trim().uuid("requestId không hợp lệ"),
+  }),
+  body: z.object({
+    assignedUnitId: z.coerce.number().int().positive(),
   }),
 });
 

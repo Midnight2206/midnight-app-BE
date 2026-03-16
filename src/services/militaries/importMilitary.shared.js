@@ -69,6 +69,7 @@ export async function parseXlsxRows(fileBuffer, { forcedTypeCode } = {}) {
     "gender",
     "militaryCode",
     "initialCommissioningYear",
+    "assignedUnit",
   ];
 
   for (const header of requiredHeaders) {
@@ -140,7 +141,8 @@ export async function parseXlsxRows(fileBuffer, { forcedTypeCode } = {}) {
       !row.gender ||
       !Array.isArray(row.types) ||
       row.types.length === 0 ||
-      !row.militaryCode
+      !row.militaryCode ||
+      !row.assignedUnit
     ) {
       throw new AppError({
         message: `XLSX row ${i + 1} has empty required fields`,

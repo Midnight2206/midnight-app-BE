@@ -7,6 +7,12 @@ import {
   normalizeUnitNameForCompare,
 } from "#services/militaries/unit.js";
 import {
+  createAssignedUnit,
+  deleteAssignedUnit,
+  listAssignedUnits,
+  updateAssignedUnit,
+} from "#services/militaries/assigned-unit.js";
+import {
   getTemplate,
   getTemplateFileName,
   importByTemplate,
@@ -60,6 +66,9 @@ class MilitariesService {
 
   listUnits = async ({ actor, scope }) => listUnits({ actor, scope });
 
+  listAssignedUnits = async ({ actor, unitId, status }) =>
+    listAssignedUnits({ actor, unitId, status });
+
   listTypes = async ({ actor }) => listMilitaryTypes({ actor });
 
   createType = async ({ actor, body }) => createMilitaryType({ actor, body });
@@ -67,6 +76,14 @@ class MilitariesService {
   deleteType = async ({ actor, typeId }) => deleteMilitaryType({ actor, typeId });
 
   createUnit = async ({ actor, body }) => createUnit({ actor, body });
+
+  createAssignedUnit = async ({ actor, body }) => createAssignedUnit({ actor, body });
+
+  updateAssignedUnit = async ({ actor, assignedUnitId, body }) =>
+    updateAssignedUnit({ actor, assignedUnitId, body });
+
+  deleteAssignedUnit = async ({ actor, assignedUnitId, unitId }) =>
+    deleteAssignedUnit({ actor, assignedUnitId, unitId });
 
   backfillMissingSearchNormalized = async () =>
     listingService.backfillMissingSearchNormalized();
@@ -155,10 +172,11 @@ class MilitariesService {
   listIncomingTransferRequests = async ({ actor }) =>
     listIncomingTransferRequests({ actor });
 
-  acceptTransferRequest = async ({ actor, requestId }) =>
+  acceptTransferRequest = async ({ actor, requestId, body }) =>
     acceptTransferRequest({
       actor,
       requestId,
+      assignedUnitId: body?.assignedUnitId,
     });
 
   undoCutTransferRequest = async ({ actor, requestId }) =>

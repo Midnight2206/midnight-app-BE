@@ -21,15 +21,18 @@ import {
   ensureNoOverlapTransfer,
   findUnitOrThrow,
 } from "#services/militaries/transfer.shared.js";
-import { getAssignmentByYear } from "#services/militaries/unit-history.js";
+import {
+  analyzeAssignmentHistory,
+  listAssignmentHistory,
+} from "#services/militaries/unit-history.js";
 import { hasMilitaryTransferLogTable } from "#services/militaries/transfer-log.shared.js";
+import { resolveAssignedUnitNameOrThrow } from "#services/militaries/assigned-unit.js";
 
 export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
   const parsedYear = parseInteger(transferOutYear, "transferOutYear");
-  const currentYear = new Date().getFullYear();
 
-  const [military, activeAssignment] = await Promise.all([
+  const [military, assignmentHistory] = await Promise.all([
     prisma.military.findFirst({
       where: {
         id: militaryId,
@@ -41,14 +44,20 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
         militaryCode: true,
       },
     }),
-    getAssignmentByYear({
+    listAssignmentHistory({
       db: prisma,
       militaryId,
-      year: currentYear,
-      strictEnd: true,
       includeUnit: true,
+      scopeUnitId: actorUnitId,
     }),
   ]);
+  const assignmentAnalysis = analyzeAssignmentHistory({
+    assignments: assignmentHistory,
+    year: parsedYear,
+    scopeUnitId: actorUnitId,
+    strictEnd: true,
+  });
+  const activeAssignment = assignmentAnalysis.includeAssignment;
 
   if (!military) {
     throw new AppError({
@@ -71,6 +80,14 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
       message: "Bạn chỉ được cắt bảo đảm quân trang cho quân nhân thuộc đơn vị của mình",
       statusCode: HTTP_CODES.FORBIDDEN,
       errorCode: "CUT_ASSURANCE_SCOPE_FORBIDDEN",
+    });
+  }
+
+  if (activeAssignment.transferOutYear !== null && activeAssignment.transferOutYear !== undefined) {
+    throw new AppError({
+      message: "Quân nhân đã có năm chuyển đi, không thể cắt bảo đảm thêm lần nữa",
+      statusCode: HTTP_CODES.CONFLICT,
+      errorCode: "MILITARY_ALREADY_CUT",
     });
   }
 
@@ -145,14 +162,15 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
       errorCode: "MILITARY_NOT_FOUND",
     });
   }
-  const currentYear = new Date().getFullYear();
-
-  const activeAssignment = await getAssignmentByYear({
+  const assignmentHistory = await listAssignmentHistory({
     db: prisma,
     militaryId: military.id,
-    year: currentYear,
-    strictEnd: true,
   });
+  const activeAssignment = analyzeAssignmentHistory({
+    assignments: assignmentHistory,
+    year: parsedYear,
+    strictEnd: true,
+  }).includeAssignment;
 
   if (activeAssignment && activeAssignment.unitId === actorUnitId) {
     throw new AppError({
@@ -255,6 +273,8 @@ export async function transferMilitaryAssurance({ actor, payload }) {
   const toUnitId = payload?.toUnitId === null ? null : parseInteger(payload?.toUnitId, "toUnitId");
   const fromExternalUnitName = String(payload?.fromExternalUnitName || "").trim();
   const toExternalUnitName = String(payload?.toExternalUnitName || "").trim();
+  const assignedUnitId =
+    payload?.assignedUnitId === null ? null : parseInteger(payload?.assignedUnitId, "assignedUnitId");
   const fullname = String(payload?.fullname || "").trim();
   const rank = normalizeMilitaryRankCode(payload?.rank, {
     required: false,
@@ -324,6 +344,14 @@ export async function transferMilitaryAssurance({ actor, payload }) {
     const toUnit = toUnitId
       ? await findUnitOrThrow({ tx, unitId: toUnitId, fieldName: "toUnitId" })
       : null;
+    const assignedUnitName =
+      toUnitId && assignedUnitId
+        ? await resolveAssignedUnitNameOrThrow({
+            tx,
+            assignedUnitId,
+            unitId: toUnitId,
+          })
+        : assignedUnitInput;
 
     let military = await tx.military.findFirst({
       where: {
@@ -403,7 +431,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
             position,
             gender,
             type: typeCatalogRows.map((item) => item.code).join(" "),
-            assignedUnit: assignedUnitInput || toUnit?.name || "",
+            assignedUnit: assignedUnitName || toUnit?.name || "",
             unitName: toUnit?.name || "",
           };
           return {
@@ -416,7 +444,8 @@ export async function transferMilitaryAssurance({ actor, payload }) {
             militaryCode,
             searchNormalized: buildMilitarySearchNormalized(baseSearch),
             initialCommissioningYear,
-            assignedUnit: assignedUnitInput || toUnit?.name || null,
+            assignedUnitId: assignedUnitId || null,
+            assignedUnit: assignedUnitName || toUnit?.name || null,
             unitId: toUnitId,
           };
         })(),
@@ -471,13 +500,16 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       };
     }
 
-    const currentYear = new Date().getFullYear();
-    const activeAssignment = await getAssignmentByYear({
+    const assignmentHistory = await listAssignmentHistory({
       db: tx,
       militaryId: military.id,
-      year: currentYear,
+    });
+    const assignmentAnalysis = analyzeAssignmentHistory({
+      assignments: assignmentHistory,
+      year: transferYear,
       strictEnd: true,
     });
+    const activeAssignment = assignmentAnalysis.includeAssignment;
 
     if (fromUnitId && (!activeAssignment || activeAssignment.unitId !== fromUnitId)) {
       throw new AppError({
@@ -504,11 +536,9 @@ export async function transferMilitaryAssurance({ actor, payload }) {
     }
 
     if (fromUnitId && activeAssignment) {
-      await tx.militaryUnit.updateMany({
+      await tx.militaryUnit.update({
         where: {
-          militaryId: military.id,
-          unitId: fromUnitId,
-          transferOutYear: null,
+          id: activeAssignment.id,
         },
         data: {
           transferOutYear: transferYear,
@@ -547,9 +577,10 @@ export async function transferMilitaryAssurance({ actor, payload }) {
         },
         data: {
           unitId: toUnitId,
-          ...(assignedUnitInput
+          assignedUnitId: assignedUnitId || null,
+          ...(assignedUnitName
             ? {
-                assignedUnit: assignedUnitInput,
+                assignedUnit: assignedUnitName,
               }
             : {}),
           searchNormalized: buildMilitarySearchNormalized({
@@ -559,7 +590,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
             position: military.position,
             gender: military.gender,
             type: effectiveTypeText,
-            assignedUnit: assignedUnitInput || military.assignedUnit || toUnit?.name || "",
+            assignedUnit: assignedUnitName || military.assignedUnit || toUnit?.name || "",
             unitName: toUnit?.name || "",
           }),
         },

@@ -2,7 +2,7 @@ import { prisma } from "#configs/prisma.config.js";
 import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import { parseInteger } from "#services/militaries/common.js";
-import { getAssignmentByYear } from "#services/militaries/unit-history.js";
+import { analyzeAssignmentHistory, listAssignmentHistory } from "#services/militaries/unit-history.js";
 
 export function getDefaultYearOptions() {
   const years = [];
@@ -97,9 +97,13 @@ export async function getRegistrationEligibility({
     };
   }
 
-  const assignment = await getAssignmentByYear({
+  const assignmentHistory = await listAssignmentHistory({
     db,
     militaryId,
+    scopeUnitId: unitId,
+  });
+  const assignmentAnalysis = analyzeAssignmentHistory({
+    assignments: assignmentHistory,
     year,
     scopeUnitId: unitId,
     strictEnd: true,
@@ -128,7 +132,7 @@ export async function getRegistrationEligibility({
     };
   }
 
-  if (!assignment) {
+  if (!assignmentAnalysis.currentAssignment) {
     return {
       isEligible: false,
       reason: "TRANSFERRED_OUT",

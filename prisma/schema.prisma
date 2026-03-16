@@ -150,6 +150,7 @@ model Military {
   militaryCode             String  @unique
   searchNormalized         String  @default("")
   initialCommissioningYear Int
+  assignedUnitId           Int?
   assignedUnit             String?
   unitId                   Int
 
@@ -165,6 +166,7 @@ model Military {
 
   claimedBy            User?                        @relation(fields: [claimedByUserId], references: [id])
   importBatch          ImportBatch?                 @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  assignedUnitCatalog  MilitaryAssignedUnit?        @relation(fields: [assignedUnitId], references: [id], onDelete: SetNull)
   unit                 Unit                         @relation(fields: [unitId], references: [id])
   militaryUnits        MilitaryUnit[]
   transferRequests     MilitaryTransferRequest[]
@@ -178,6 +180,7 @@ model Military {
   genderCatalog        MilitaryGenderCatalog         @relation(fields: [genderId], references: [id], onDelete: Restrict)
 
   @@index([unitId])
+  @@index([assignedUnitId])
   @@index([rankGroup])
   @@index([genderId])
   @@index([importBatchId])
@@ -272,6 +275,7 @@ model Unit {
   deletedAt      DateTime?
 
   militaries           Military[]
+  assignedUnits        MilitaryAssignedUnit[]
   militaryUnits        MilitaryUnit[]
   transferRequestsFrom MilitaryTransferRequest[] @relation("TransferFromUnit")
   transferRequestsTo   MilitaryTransferRequest[] @relation("TransferToUnit")
@@ -285,6 +289,24 @@ model Unit {
   allocationIssueVouchers SupplyAllocationIssueVoucher[]
 
   @@map("units")
+}
+
+model MilitaryAssignedUnit {
+  id             Int      @id @default(autoincrement())
+  unitId         Int
+  name           String
+  nameNormalized String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+
+  unit       Unit       @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  militaries Military[]
+
+  @@unique([unitId, nameNormalized])
+  @@index([unitId, deletedAt])
+  @@index([deletedAt])
+  @@map("military_assigned_units")
 }
 
 model MilitaryTransferRequest {

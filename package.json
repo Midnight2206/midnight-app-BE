@@ -50,7 +50,11 @@
     "prod:down": "sh ./scripts/prod/full.sh down",
     "prod:logs": "sh ./scripts/prod/full.sh logs",
     "prod:status": "sh ./scripts/prod/full.sh status",
-    "prod:restart": "sh ./scripts/prod/full.sh restart"
+    "prod:restart": "sh ./scripts/prod/full.sh restart",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate:dev": "cross-env DOTENV_CONFIG_PATH=.env.dev prisma migrate dev",
+    "prisma:migrate:deploy": "cross-env DOTENV_CONFIG_PATH=.env.prod prisma migrate deploy"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "^7.3.0",

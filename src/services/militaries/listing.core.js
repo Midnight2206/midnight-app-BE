@@ -19,6 +19,10 @@ import {
   resolveMilitaryRankSearchCandidates,
 } from "#services/militaries/profile-reference.js";
 import { hasMilitaryTransferLogTable } from "#services/militaries/transfer-log.shared.js";
+import {
+  analyzeAssignmentHistory,
+  evaluateMilitaryUnitYearState,
+} from "#services/militaries/unit-history.js";
 
 function formatMilitaryTypesFromAssignments(assignments) {
   const types = (assignments || [])
@@ -360,13 +364,6 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
           militaryUnits: {
             where: {
               AND: [
-                { transferInYear: { lte: snapshotYear } },
-                {
-                  OR: [
-                    { transferOutYear: null },
-                    { transferOutYear: { gte: snapshotYear } },
-                  ],
-                },
                 ...(selectedTypeId
                   ? [{ OR: [{ typeId: selectedTypeId }, { typeId: null }] }]
                   : []),
@@ -387,7 +384,7 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
               { transferOutYear: "asc" },
               { id: "desc" },
             ],
-            take: 1,
+            take: scopeUnitId ? 50 : 10,
           },
           transferRequests: {
             where: {
@@ -506,13 +503,20 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
 
     const mappedMilitaries = militaries
       .map((military) => {
-        const historyAssignment = military.militaryUnits?.[0] || null;
+        const assignmentHistory = Array.isArray(military.militaryUnits) ? military.militaryUnits : [];
+        const assignmentAnalysis = analyzeAssignmentHistory({
+          assignments: assignmentHistory,
+          year: snapshotYear,
+          typeId: selectedTypeId,
+          scopeUnitId,
+          strictEnd: true,
+        });
         const currentAssignment =
-          historyAssignment && historyAssignment.unit
+          assignmentAnalysis.currentAssignment && assignmentAnalysis.currentAssignment.unit
             ? {
-                transferInYear: historyAssignment.transferInYear,
-                transferOutYear: historyAssignment.transferOutYear,
-                unit: historyAssignment.unit,
+                transferInYear: assignmentAnalysis.currentAssignment.transferInYear,
+                transferOutYear: assignmentAnalysis.currentAssignment.transferOutYear,
+                unit: assignmentAnalysis.currentAssignment.unit,
               }
             : null;
         const {
@@ -523,31 +527,30 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
         } = military;
         const typeInfo = formatMilitaryTypesFromAssignments(military.typeAssignments);
         const unitName =
-          military.assignedUnit || currentAssignment?.unit?.name || military.unit?.name;
+          military.assignedUnit ||
+          currentAssignment?.unit?.name ||
+          assignmentAnalysis.latestAssignment?.unit?.name ||
+          military.unit?.name;
+        const yearState = evaluateMilitaryUnitYearState({
+          assignments: assignmentHistory,
+          transferRequests: military.transferRequests || [],
+          currentYear: selectedYear,
+          unitId: scopeUnitId,
+          typeId: selectedTypeId,
+        });
         const latestTransferRequest = military.transferRequests?.[0] || null;
-        const pendingTransferRequest = (military.transferRequests || []).find(
-          (request) =>
-            request?.status === "PENDING" &&
-            request?.transferYear <= selectedYear &&
-            (!scopeUnitId || request?.fromUnitId === scopeUnitId),
-        ) || null;
-        const acceptedTransferRequest = (military.transferRequests || []).find(
-          (request) =>
-            request?.status === "ACCEPTED" &&
-            request?.transferYear <= selectedYear &&
-            (!scopeUnitId || request?.fromUnitId === scopeUnitId),
-        ) || null;
-        const hasActiveAssignmentForRegistration =
-          !!currentAssignment &&
-          (currentAssignment.transferOutYear === null ||
-            currentAssignment.transferOutYear > selectedYear);
+        const pendingTransferRequest =
+          yearState.isHasReqTransfer === "waiting" ? yearState.matchedRequest || null : null;
+        const acceptedTransferRequest =
+          yearState.isHasReqTransfer === "accepted" ? yearState.matchedRequest || null : null;
+        const hasActiveAssignmentForRegistration = !!currentAssignment;
         const canRegisterSizes =
-          hasActiveAssignmentForRegistration && !pendingTransferRequest && !acceptedTransferRequest;
+          hasActiveAssignmentForRegistration && yearState.isHasReqTransfer === false;
         const registrationLockReason = !hasActiveAssignmentForRegistration
           ? "TRANSFERRED_OUT"
-          : pendingTransferRequest
+          : yearState.isHasReqTransfer === "waiting"
             ? "PENDING_TRANSFER"
-            : acceptedTransferRequest
+            : yearState.isHasReqTransfer === "accepted"
               ? "TRANSFER_ACCEPTED"
               : null;
 
@@ -565,7 +568,10 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
         }) || null;
         const transferOutDetail = transferLogs.find((item) => {
           if (!item) return false;
-          if (Number(item.transferYear || 0) !== Number(currentAssignment?.transferOutYear || 0)) {
+          if (
+            Number(item.transferYear || 0) !==
+            Number(assignmentAnalysis.latestTransferOutAssignment?.transferOutYear || 0)
+          ) {
             return false;
           }
           if (scopeUnitId) {
@@ -581,8 +587,66 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
           gender: military.genderCatalog?.code || military.gender,
           ...typeInfo,
           assignedUnit: unitName,
-          unitTransferInYear: currentAssignment?.transferInYear || null,
-          unitTransferOutYear: currentAssignment?.transferOutYear || null,
+          unitTransferInYear:
+            yearState.includeAnalysis.includeAssignment?.transferInYear ||
+            yearState.showAnalysis.showAssignment?.transferInYear ||
+            currentAssignment?.transferInYear ||
+            assignmentAnalysis.latestAssignment?.transferInYear ||
+            null,
+          unitTransferOutYear:
+            yearState.showAnalysis.showAssignment?.transferOutYear ||
+            yearState.includeAnalysis.latestTransferOutAssignment?.transferOutYear ||
+            assignmentAnalysis.latestTransferOutAssignment?.transferOutYear ||
+            null,
+          hasHistoricalTransferOut: assignmentAnalysis.hasHistoricalTransferOut,
+          isIncludeUnit: yearState.isIncludeUnit,
+          isShowMilitary: yearState.isShowMilitary,
+          isHasReqTransfer: yearState.isHasReqTransfer,
+          canCut: yearState.canCut,
+          displayStatus: yearState.displayStatus,
+          yearState: {
+            currentYear: yearState.currentYear,
+            unitId: yearState.unitId,
+            typeId: yearState.typeId,
+            isIncludeUnit: yearState.isIncludeUnit,
+            isShowMilitary: yearState.isShowMilitary,
+            canCut: yearState.canCut,
+            isHasReqTransfer: yearState.isHasReqTransfer,
+            displayStatus: yearState.displayStatus,
+            matchedRequest: yearState.matchedRequest
+              ? {
+                  id: yearState.matchedRequest.id,
+                  typeId: yearState.matchedRequest.typeId,
+                  status: yearState.matchedRequest.status,
+                  fromUnitId: yearState.matchedRequest.fromUnitId,
+                  toUnitId: yearState.matchedRequest.toUnitId,
+                  transferYear: yearState.matchedRequest.transferYear,
+                  requestedAt: yearState.matchedRequest.requestedAt,
+                }
+              : null,
+            includeAnalysis: {
+              hasAnyAssignment: yearState.includeAnalysis.hasAnyAssignment,
+              hasHistoricalTransferOut: yearState.includeAnalysis.hasHistoricalTransferOut,
+              hasTransferOutOnOrBeforeYear:
+                yearState.includeAnalysis.hasTransferOutOnOrBeforeYear,
+              currentAssignment: yearState.includeAnalysis.currentAssignment,
+              latestAssignment: yearState.includeAnalysis.latestAssignment,
+              latestTransferOutAssignment:
+                yearState.includeAnalysis.latestTransferOutAssignment,
+              assignments: yearState.includeAnalysis.assignments,
+            },
+            showAnalysis: {
+              hasAnyAssignment: yearState.showAnalysis.hasAnyAssignment,
+              hasHistoricalTransferOut: yearState.showAnalysis.hasHistoricalTransferOut,
+              hasTransferOutOnOrBeforeYear:
+                yearState.showAnalysis.hasTransferOutOnOrBeforeYear,
+              currentAssignment: yearState.showAnalysis.currentAssignment,
+              latestAssignment: yearState.showAnalysis.latestAssignment,
+              latestTransferOutAssignment:
+                yearState.showAnalysis.latestTransferOutAssignment,
+              assignments: yearState.showAnalysis.assignments,
+            },
+          },
           transferInDetail: transferInDetail
             ? {
                 id: transferInDetail.id,
