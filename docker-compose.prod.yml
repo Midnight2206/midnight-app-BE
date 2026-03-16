@@ -9,13 +9,16 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     command:
-      - --default-authentication-plugin=mysql_native_password
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent"]
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -37,6 +40,8 @@ services:
       context: .
       dockerfile: Dockerfile.prod
     restart: unless-stopped
+    ports:
+      - "3000:3000"
     env_file:
       - .env.prod
     environment:
@@ -83,24 +88,7 @@ services:
       redis:
         condition: service_healthy
 
-  caddy:
-    image: caddy:2.8
-    restart: unless-stopped
-    env_file:
-      - .env.prod
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
 volumes:
   mysql_data:
   redis_data:
   backup_data:
-  caddy_data:
-  caddy_config:

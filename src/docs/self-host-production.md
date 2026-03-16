@@ -4,8 +4,9 @@
 
 - OS khuyến nghị: Ubuntu Server 22.04/24.04 LTS
 - Cài Docker + Docker Compose plugin
-- DNS trỏ `API_DOMAIN` về IP public của máy
-- Mở port `80, 443` trên router/firewall
+- DNS trỏ domain backend về IP public của máy
+- `nginx` trên server sẽ reverse proxy về backend ở `127.0.0.1:3000`
+- Mở port `80, 443` trên router/firewall cho `nginx`
 
 ## 2) Clone và cấu hình
 
@@ -35,6 +36,14 @@ cp .env.example .env.dev
 ```bash
 npm run prod:start
 ```
+
+Stack production sẽ chạy:
+- `mysql`
+- `redis`
+- `api` trên port host `3000`
+- `backup`
+
+Backend không còn tự kèm `caddy`; `nginx` hệ thống sẽ nhận traffic ngoài và proxy vào `127.0.0.1:3000`.
 
 Lần cập nhật tiếp theo chỉ cần:
 
@@ -100,9 +109,28 @@ docker run --rm \
 
 ## 8) Troubleshooting nhanh
 
-- Lỗi SSL: kiểm tra DNS trỏ đúng và port 80/443 mở
+- Lỗi reverse proxy: kiểm tra `nginx` đang trỏ về `127.0.0.1:3000`
+- Lỗi SSL: kiểm tra DNS trỏ đúng và `nginx` đang nghe port 80/443
 - Lỗi DB: xem log `mysql` + kiểm tra `DB_*` trong `.env.prod`
 - Lỗi queue: kiểm tra log `redis` và `api` (BullMQ/Redis connection)
 - Lỗi email:
   - `EMAIL_DELIVERY_MODE=gmail`: cần bật 2FA tài khoản Gmail + tạo App Password
   - kiểm tra `GMAIL_USER`, `GMAIL_APP_PASSWORD`, `EMAIL_FROM`
+
+## 9) Cấu hình nginx mẫu
+
+```nginx
+server {
+    listen 80;
+    server_name api.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
