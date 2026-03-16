@@ -30,6 +30,30 @@ const MODULE_LABELS = {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const routesDir = path.resolve(__dirname, "../routes");
+const projectRoot = path.resolve(__dirname, "..");
+
+function resolveRouteSourcePath(filePath, content) {
+  const reExportMatch = content.match(
+    /export\s+\{\s*default\s*\}\s+from\s+["']#src\/(.+?)["']/,
+  );
+
+  if (!reExportMatch) {
+    return filePath;
+  }
+
+  return path.resolve(projectRoot, reExportMatch[1]);
+}
+
+function readRouteSource(filePath) {
+  const content = fs.readFileSync(filePath, "utf-8");
+  const resolvedPath = resolveRouteSourcePath(filePath, content);
+
+  if (resolvedPath === filePath) {
+    return content;
+  }
+
+  return fs.readFileSync(resolvedPath, "utf-8");
+}
 
 function shouldSkipPermission(code) {
   return SKIPPED_PERMISSION_CODES.has(code);
@@ -196,7 +220,8 @@ function collectPermissionsFromRouteFiles() {
   for (const file of files) {
     const routeName = file.replace(".route.js", "");
     const basePath = `/api/${routeName}`;
-    const content = fs.readFileSync(path.join(routesDir, file), "utf-8");
+    const routeFilePath = path.join(routesDir, file);
+    const content = readRouteSource(routeFilePath);
 
     for (const method of HTTP_METHODS) {
       const routeRegex = new RegExp(
