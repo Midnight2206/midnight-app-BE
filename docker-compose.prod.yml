@@ -1,5 +1,3 @@
-name: f8-nodejs-prod
-
 services:
   mysql:
     image: mysql:8.4

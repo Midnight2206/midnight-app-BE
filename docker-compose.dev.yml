@@ -1,5 +1,3 @@
-name: f8-nodejs-dev
-
 services:
   redis:
     image: redis:7-alpine
