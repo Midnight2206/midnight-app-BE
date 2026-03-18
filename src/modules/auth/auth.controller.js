@@ -7,6 +7,24 @@ import {
 } from "#services/auth/request-meta.service.js";
 
 class AuthController {
+  _getCookieDomain() {
+    if (process.env.NODE_ENV !== "production") return undefined;
+
+    const rawFrontendUrl = String(process.env.FRONTEND_APP_URL || "").trim();
+    if (rawFrontendUrl) {
+      try {
+        const { hostname } = new URL(rawFrontendUrl);
+        if (hostname) {
+          return hostname.startsWith(".") ? hostname : `.${hostname.replace(/^www\./, "")}`;
+        }
+      } catch {
+        // Ignore malformed FRONTEND_APP_URL and fall back to default host-only cookies.
+      }
+    }
+
+    return undefined;
+  }
+
   _getCookieOptions() {
     return {
       httpOnly: true,
@@ -14,6 +32,7 @@ class AuthController {
       // FE and API are cross-origin but still same-site on the same registrable domain.
       // Lax is more mobile-friendly here while remaining stricter than SameSite=None.
       sameSite: "lax",
+      domain: this._getCookieDomain(),
     };
   }
 
