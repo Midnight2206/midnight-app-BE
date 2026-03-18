@@ -5,34 +5,42 @@ import {
   getRefreshTokenHashFromRequest,
   getUserAgent,
 } from "#services/auth/request-meta.service.js";
+
 class AuthController {
-  _setCookies(res, accessToken, refreshToken) {
-    // set access token cookie
-    res.cookie("accessToken", accessToken, {
+  _getCookieOptions() {
+    return {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // dev cross-origin
+      // FE and API are cross-origin but still same-site on the same registrable domain.
+      // Lax is more mobile-friendly here while remaining stricter than SameSite=None.
+      sameSite: "lax",
+    };
+  }
+
+  _setCookies(res, accessToken, refreshToken) {
+    const cookieOptions = this._getCookieOptions();
+
+    // set access token cookie
+    res.cookie("accessToken", accessToken, {
+      ...cookieOptions,
       maxAge: 15 * 60 * 1000, // 15 phút
     });
 
     // set refresh token cookie
     res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax", // dev cross-origin
+      ...cookieOptions,
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
     });
   }
+
   _clearCookies(res) {
+    const cookieOptions = this._getCookieOptions();
+
     res.clearCookie("accessToken", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      ...cookieOptions,
     });
     res.clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      ...cookieOptions,
     });
   }
   login = async (req, res) => {
