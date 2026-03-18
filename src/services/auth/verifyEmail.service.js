@@ -4,7 +4,6 @@ import { HTTP_CODES } from "#src/constants.js";
 import { signMailToken, verifyMailToken } from "#utils/jwt.js";
 import { AppError } from "#utils/AppError.js";
 import { enqueueVerifyEmail } from "#services/emailVerification.queue.js";
-import { sendVerifyEmail } from "#services/email.service.js";
 import { getRedisConnection } from "#src/queues/redis.connection.js";
 import { ensureSuperAdmin } from "#utils/roleGuards.js";
 import {
@@ -265,7 +264,7 @@ export async function testVerifyEmailDelivery({ actor, toEmail, requestOrigin })
     requestOrigin,
   });
 
-  const mailResult = await sendVerifyEmail({
+  const queueResult = await enqueueVerifyEmail({
     to: targetEmail,
     username: sender.username,
     verificationUrl,
@@ -274,6 +273,7 @@ export async function testVerifyEmailDelivery({ actor, toEmail, requestOrigin })
   return {
     sent: true,
     to: targetEmail,
-    ...mailResult,
+    queued: true,
+    ...queueResult,
   };
 }

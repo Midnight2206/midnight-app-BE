@@ -4,6 +4,9 @@ import { validate } from "#middlewares/validateRequest.js";
 import {
   registerSchema,
   loginSchema,
+  passwordChangeConfirmSchema,
+  passwordChangeRequestSchema,
+  updateProfileSchema,
   verifyEmailConfirmSchema,
   verifyEmailTestSchema,
 } from "#src/zodSchemas/auth.schema.js";
@@ -43,6 +46,33 @@ router.post("/refresh", refreshRateLimiter, publicRoute, authController.refresh)
 router.post("/logout", protectedRoute, authController.logout);
 
 router.get("/me", protectedRoute, authController.getCurrentUser);
+
+router.get("/profile", protectedRoute, authController.getMyProfile);
+router.patch(
+  "/profile",
+  protectedRoute,
+  validate(updateProfileSchema),
+  authController.updateMyProfile,
+);
+router.get("/sessions", protectedRoute, authController.getMySessions);
+router.get(
+  "/password-change/status",
+  protectedRoute,
+  authController.getPasswordChangeStatus,
+);
+router.post(
+  "/password-change/request",
+  protectedRoute,
+  validate(passwordChangeRequestSchema),
+  authController.requestPasswordChange,
+);
+router.post(
+  "/password-change/confirm",
+  publicRoute,
+  authRateLimiter,
+  validate(passwordChangeConfirmSchema),
+  authController.confirmPasswordChange,
+);
 
 router.post(
   "/verify-email/request",

@@ -25,6 +25,7 @@ model User {
 
   military                      Military?
   profile                       Profile?
+  passwordChangeRequests        PasswordChangeRequest[]
   tokens                        RefreshToken[]
   roles                         UserRole[]
   importBatches                 ImportBatch[]
@@ -134,6 +135,26 @@ model RefreshToken {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+model PasswordChangeRequest {
+  id                      String    @id @default(uuid())
+  tokenHash               String    @unique
+  userId                  String
+  newPasswordHash         String
+  requestedByTokenHash    String?
+  expiresAt               DateTime
+  createdAt               DateTime  @default(now())
+  consumedAt              DateTime?
+  revokedAt               DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([consumedAt])
+  @@index([revokedAt])
+  @@map("password_change_requests")
 }
 
 //////////////////////////////////////////////////////

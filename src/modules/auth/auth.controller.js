@@ -1,5 +1,10 @@
 import authService from "#src/services/auth.service.js";
 import { HTTP_CODES } from "#src/constants.js";
+import {
+  getClientIp,
+  getRefreshTokenHashFromRequest,
+  getUserAgent,
+} from "#services/auth/request-meta.service.js";
 class AuthController {
   _setCookies(res, accessToken, refreshToken) {
     // set access token cookie
@@ -32,11 +37,8 @@ class AuthController {
   }
   login = async (req, res) => {
     const { identifier, password } = req.body;
-    const userAgent = req.get("User-Agent") || "";
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket.remoteAddress ||
-      "";
+    const userAgent = getUserAgent(req);
+    const ip = getClientIp(req);
     const result = await authService.login({
       identifier,
       password,
@@ -53,11 +55,8 @@ class AuthController {
   };
   register = async (req, res) => {
     const { email, password, username, militaryCode } = req.body;
-    const userAgent = req.get("User-Agent") || "";
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket.remoteAddress ||
-      "";
+    const userAgent = getUserAgent(req);
+    const ip = getClientIp(req);
     const result = await authService.register({
       email,
       password,
@@ -87,12 +86,8 @@ class AuthController {
   };
   refresh = async (req, res) => {
     const refreshToken = req.cookies?.refreshToken;
-
-    const userAgent = req.get("User-Agent") || "";
-    const ip =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket.remoteAddress ||
-      "";
+    const userAgent = getUserAgent(req);
+    const ip = getClientIp(req);
 
     const { accessToken, refreshToken: newRefreshToken } =
       await authService.refreshToken({
@@ -114,6 +109,75 @@ class AuthController {
     this._clearCookies(res);
     return res.success({
       message: "Logout successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  getMyProfile = async (req, res) => {
+    const profile = await authService.getMyProfile(req.user.id);
+    return res.success({
+      data: profile,
+      message: "Get profile successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  updateMyProfile = async (req, res) => {
+    const profile = await authService.updateMyProfile(req.user.id, req.body || {});
+    return res.success({
+      data: profile,
+      message: "Profile updated successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  getMySessions = async (req, res) => {
+    const sessions = await authService.getMySessions({
+      userId: req.user.id,
+      currentRefreshTokenHash: getRefreshTokenHashFromRequest(req),
+    });
+    return res.success({
+      data: { sessions },
+      message: "Get sessions successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  getPasswordChangeStatus = async (req, res) => {
+    const status = await authService.getPasswordChangeStatus(req.user.id);
+    return res.success({
+      data: status,
+      message: "Get password change status successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  requestPasswordChange = async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    const result = await authService.requestPasswordChange({
+      userId: req.user.id,
+      currentPassword,
+      newPassword,
+      requestOrigin: req.get("origin") || "",
+      currentRefreshTokenHash: getRefreshTokenHashFromRequest(req),
+    });
+
+    return res.success({
+      data: result,
+      message: "Password change verification email sent",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  confirmPasswordChange = async (req, res) => {
+    const result = await authService.confirmPasswordChange({
+      token: req.body?.token,
+      currentRefreshTokenHash: getRefreshTokenHashFromRequest(req),
+    });
+
+    return res.success({
+      data: result,
+      message: "Password changed successfully",
       statusCode: HTTP_CODES.OK,
     });
   };

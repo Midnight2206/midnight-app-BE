@@ -1,14 +1,9 @@
 import { RateLimiterRedis } from "rate-limiter-flexible";
 import { getRedisConnection } from "#src/queues/redis.connection.js";
+import { getClientIp } from "#services/auth/request-meta.service.js";
 
 function getIp(req) {
-  // Express uses `req.ip` + trust proxy; fallback for safety
-  return (
-    req.ip ||
-    req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    "unknown"
-  );
+  return getClientIp(req) || "unknown";
 }
 
 export function createRateLimiter({

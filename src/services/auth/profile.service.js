@@ -4,6 +4,12 @@ export async function getCurrentUser(userId) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: {
+      unit: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
       profile: true,
       roles: {
         include: {
@@ -32,6 +38,7 @@ export async function getCurrentUser(userId) {
     email: user.email,
     username: user.username,
     unitId: user.unitId,
+    unit: user.unit,
     verifiedAt: user.verifiedAt,
     permissions: [...new Set(permissions)],
     roles: user.roles.map((r) => r.role.name),
