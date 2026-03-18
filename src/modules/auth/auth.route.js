@@ -61,6 +61,11 @@ router.get(
   authController.getPasswordChangeStatus,
 );
 router.post(
+  "/password-change/cancel",
+  protectedRoute,
+  authController.cancelPasswordChangeRequest,
+);
+router.post(
   "/password-change/request",
   protectedRoute,
   validate(passwordChangeRequestSchema),

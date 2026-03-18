@@ -131,6 +131,20 @@ async function getUserWithSecurity(userId) {
 }
 
 async function findPendingPasswordChange(userId) {
+  await prisma.passwordChangeRequest.updateMany({
+    where: {
+      userId,
+      consumedAt: null,
+      revokedAt: null,
+      expiresAt: {
+        lte: new Date(),
+      },
+    },
+    data: {
+      revokedAt: new Date(),
+    },
+  });
+
   return prisma.passwordChangeRequest.findFirst({
     where: {
       userId,
@@ -159,6 +173,25 @@ function mapPasswordChangeRequest(request) {
     isPending: true,
     requestedAt: request.createdAt,
     expiresAt: request.expiresAt,
+  };
+}
+
+export async function cancelPasswordChangeRequest(userId) {
+  await getUserWithSecurity(userId);
+
+  const result = await prisma.passwordChangeRequest.updateMany({
+    where: {
+      userId,
+      consumedAt: null,
+      revokedAt: null,
+    },
+    data: {
+      revokedAt: new Date(),
+    },
+  });
+
+  return {
+    cancelled: result.count > 0,
   };
 }
 

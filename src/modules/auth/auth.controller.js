@@ -190,6 +190,15 @@ class AuthController {
     });
   };
 
+  cancelPasswordChangeRequest = async (req, res) => {
+    const result = await authService.cancelPasswordChangeRequest(req.user.id);
+    return res.success({
+      data: result,
+      message: "Password change request cancelled successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
   requestPasswordChange = async (req, res) => {
     const { currentPassword, newPassword } = req.body;
     const result = await authService.requestPasswordChange({

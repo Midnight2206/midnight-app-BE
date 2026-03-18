@@ -6,6 +6,7 @@ import {
 } from "#services/auth/session.service.js";
 import { getCurrentUser } from "#services/auth/profile.service.js";
 import {
+  cancelPasswordChangeRequest,
   confirmPasswordChange,
   getMyProfile,
   getMySessions,
@@ -29,6 +30,7 @@ class AuthService {
   updateMyProfile = updateMyProfile;
   getMySessions = getMySessions;
   getPasswordChangeStatus = getPasswordChangeStatus;
+  cancelPasswordChangeRequest = cancelPasswordChangeRequest;
   requestPasswordChange = requestPasswordChange;
   confirmPasswordChange = confirmPasswordChange;
   requestVerifyEmail = requestVerifyEmail;
