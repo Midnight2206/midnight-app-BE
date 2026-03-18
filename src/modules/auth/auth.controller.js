@@ -32,6 +32,7 @@ class AuthController {
       // FE and API are cross-origin but still same-site on the same registrable domain.
       // Lax is more mobile-friendly here while remaining stricter than SameSite=None.
       sameSite: "lax",
+      path: "/",
       domain: this._getCookieDomain(),
     };
   }
@@ -60,6 +61,16 @@ class AuthController {
     });
     res.clearCookie("refreshToken", {
       ...cookieOptions,
+    });
+
+    // Also clear legacy host-only cookies from previous deployments where no domain was set.
+    res.clearCookie("accessToken", {
+      ...cookieOptions,
+      domain: undefined,
+    });
+    res.clearCookie("refreshToken", {
+      ...cookieOptions,
+      domain: undefined,
     });
   }
   login = async (req, res) => {
