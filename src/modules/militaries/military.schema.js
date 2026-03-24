@@ -58,6 +58,63 @@ export const updateMilitarySizeRegistrationsSchema = z.object({
   }),
 });
 
+const personalLedgerQuerySchema = z
+  .object({
+    asOfYear: z.coerce.number().int().min(1900).max(3000).optional(),
+    yearFrom: z.coerce.number().int().min(1900).max(3000).optional(),
+    yearTo: z.coerce.number().int().min(1900).max(3000).optional(),
+  })
+  .refine(
+    (query) =>
+      query.yearFrom === undefined ||
+      query.yearTo === undefined ||
+      query.yearTo >= query.yearFrom,
+    {
+      message: "yearTo phải lớn hơn hoặc bằng yearFrom",
+      path: ["yearTo"],
+    },
+  );
+
+export const getMyPersonalLedgerSchema = z.object({
+  query: personalLedgerQuerySchema,
+});
+
+export const getMilitaryPersonalLedgerSchema = z.object({
+  params: z.object({
+    militaryId: z.string().trim().uuid("militaryId không hợp lệ"),
+  }),
+  query: personalLedgerQuerySchema,
+});
+
+export const updateMilitaryFromPersonalLedgerSchema = z.object({
+  params: z.object({
+    militaryId: z.string().trim().uuid("militaryId không hợp lệ"),
+  }),
+  body: z
+    .object({
+      fullname: z.string().trim().min(1, "Họ tên là bắt buộc").max(191).optional(),
+      militaryCode: z.string().trim().min(1, "Mã quân nhân là bắt buộc").max(100).optional(),
+      rank: z.string().trim().min(1, "Cấp bậc là bắt buộc").max(50).optional(),
+      position: z.string().trim().min(1, "Chức vụ là bắt buộc").max(191).optional(),
+      gender: z.enum(["MALE", "FEMALE"]).optional(),
+      assignedUnitId: z.preprocess(
+        (value) => (value === "" || value === undefined ? undefined : value),
+        z.union([z.coerce.number().int().positive(), z.null()]).optional(),
+      ),
+      initialCommissioningYear: z.coerce.number().int().min(1900).max(2100).optional(),
+    })
+    .refine((body) => Object.keys(body).length > 0, {
+      message: "Phải có ít nhất một trường cần cập nhật",
+      path: ["body"],
+    }),
+});
+
+export const allocationModeBaselineTemplateSchema = z.object({
+  query: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+  }),
+});
+
 export const createRegistrationYearSchema = z.object({
   body: z.object({
     year: z.coerce.number().int().min(2020).max(2100),
@@ -71,6 +128,7 @@ export const cutMilitaryAssuranceSchema = z.object({
   }),
   body: z.object({
     transferOutYear: z.coerce.number().int().min(1900).max(2100),
+    typeId: z.coerce.number().int().positive().optional(),
   }),
 });
 
@@ -78,6 +136,7 @@ export const receiveMilitaryAssuranceSchema = z.object({
   body: z.object({
     militaryCode: z.string().trim().min(1, "militaryCode là bắt buộc").max(100),
     transferInYear: z.coerce.number().int().min(1900).max(2100),
+    typeId: z.coerce.number().int().positive().optional(),
   }),
 });
 
@@ -111,6 +170,7 @@ export const transferMilitaryAssuranceSchema = z.object({
       initialCommissioningYear: z.coerce.number().int().min(1900).max(2100).optional(),
       assignedUnit: z.string().trim().max(191).optional(),
       note: z.string().trim().max(191).optional(),
+      typeId: z.coerce.number().int().positive().optional(),
     })
     .refine((data) => data.fromUnitId !== null || data.toUnitId !== null, {
       message: "Từ đơn vị hoặc đến đơn vị phải có ít nhất một giá trị",

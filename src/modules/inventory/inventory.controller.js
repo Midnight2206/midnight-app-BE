@@ -195,6 +195,86 @@ class InventoryController {
     });
   };
 
+  listAllocationServiceLifeRules = async (req, res) => {
+    const result = await inventoryService.listAllocationServiceLifeRules({
+      actor: req.user,
+      unitId: req.query.unitId,
+      typeId: req.query.typeId,
+      categoryId: req.query.categoryId,
+      status: req.query.status,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    return res.success({
+      data: result,
+      message: "Get allocation service life rules successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  createAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.createAllocationServiceLifeRule({
+      actor: req.user,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Create allocation service life rule successfully",
+      statusCode: HTTP_CODES.CREATED,
+    });
+  };
+
+  getAllocationServiceLifeEditor = async (req, res) => {
+    const result = await inventoryService.getAllocationServiceLifeEditor({
+      actor: req.user,
+      unitId: req.query.unitId,
+      typeId: req.query.typeId,
+    });
+    return res.success({
+      data: result,
+      message: "Get allocation service life editor successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  saveAllocationServiceLifeEditor = async (req, res) => {
+    const result = await inventoryService.saveAllocationServiceLifeEditor({
+      actor: req.user,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Save allocation service life editor successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  updateAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.updateAllocationServiceLifeRule({
+      actor: req.user,
+      ruleId: req.params.ruleId,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Update allocation service life rule successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  deleteAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.deleteAllocationServiceLifeRule({
+      actor: req.user,
+      ruleId: req.params.ruleId,
+      unitId: req.query.unitId,
+    });
+    return res.success({
+      data: result,
+      message: "Delete allocation service life rule successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
   updateAllocationStandard = async (req, res) => {
     const result = await inventoryService.updateAllocationStandard({
       actor: req.user,
@@ -227,6 +307,7 @@ class InventoryController {
       subjectId: req.query.subjectId,
       militaryId: req.query.militaryId,
       categoryId: req.query.categoryId,
+      typeId: req.query.typeId,
       asOfDate: req.query.asOfDate,
       asOfYear: req.query.asOfYear,
       gender: req.query.gender,
@@ -263,6 +344,25 @@ class InventoryController {
     return res.success({
       data: result,
       message: "Get allocation issue vouchers successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  listAllocationIssueHistory = async (req, res) => {
+    const result = await inventoryService.listAllocationIssueHistory({
+      actor: req.user,
+      unitId: req.query.unitId,
+      militaryId: req.query.militaryId,
+      categoryId: req.query.categoryId,
+      itemId: req.query.itemId,
+      yearFrom: req.query.yearFrom,
+      yearTo: req.query.yearTo,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    return res.success({
+      data: result,
+      message: "Get allocation issue history successfully",
       statusCode: HTTP_CODES.OK,
     });
   };

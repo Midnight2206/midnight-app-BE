@@ -51,6 +51,7 @@
     "prod:logs": "sh ./scripts/prod/full.sh logs",
     "prod:status": "sh ./scripts/prod/full.sh status",
     "prod:restart": "sh ./scripts/prod/full.sh restart",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
     "prisma:migrate:dev": "cross-env DOTENV_CONFIG_PATH=.env.dev prisma migrate dev",
@@ -64,22 +65,27 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.3",
     "morgan": "^1.10.1",
-    "nodemailer": "^6.10.1",
+    "nodemailer": "^8.0.3",
     "prisma": "^7.3.0",
     "rate-limiter-flexible": "^9.1.1",
-    "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
-    "xlsx": "^0.18.5",
+    "yaml": "^2.8.2",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",
     "jest": "^30.3.0",
-    "nodemon": "^3.1.11",
+    "nodemon": "^3.1.14",
     "supertest": "^7.2.2"
+  },
+  "overrides": {
+    "@hono/node-server": "1.19.11",
+    "hono": "4.12.8",
+    "qs": "6.15.0"
   }
 }

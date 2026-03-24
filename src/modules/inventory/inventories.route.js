@@ -18,6 +18,7 @@ import {
   createUnitOfMeasureSchema,
   createSupplyItemSchema,
   getAllocationEligibleItemsSchema,
+  listAllocationIssueHistorySchema,
   listAllocationSubjectMembershipsSchema,
   itemIdParamSchema,
   removeCategoryWarehouseItemSchema,
@@ -101,6 +102,11 @@ router.post(
 router.get(
   "/allocation-issues/vouchers",
   inventoryController.listAllocationIssueVouchers,
+);
+router.get(
+  "/allocation-issues/history",
+  validate(listAllocationIssueHistorySchema),
+  inventoryController.listAllocationIssueHistory,
 );
 router.get(
   "/allocation-issues/vouchers/:voucherId",

@@ -19,6 +19,7 @@ const SKIPPED_PERMISSION_CODES = new Set([
 const MODULE_LABELS = {
   access: "quản trị phân quyền",
   accounts: "quản lý tài khoản",
+  "allocation-modes": "chế độ cấp phát quân trang",
   auth: "xác thực tài khoản",
   backups: "sao lưu và khôi phục dữ liệu",
   categories: "danh mục quân trang",
@@ -105,6 +106,10 @@ function inferResourceLabel(routeName, normalizedPath) {
     if (normalizedPath.includes("/stocks/adjust")) return "điều chỉnh tồn kho";
     if (normalizedPath.includes("/stocks")) return "tồn kho mặt hàng";
     return "kho quân trang";
+  }
+
+  if (routeName === "allocation-modes") {
+    return "chế độ cấp phát quân trang";
   }
 
   if (routeName === "categories") return "danh mục quân trang";

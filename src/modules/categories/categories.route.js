@@ -12,6 +12,12 @@ import {
   colorIdParamSchema as inventoryColorIdParamSchema,
   createColorSchema as inventoryCreateColorSchema,
   createVersionSchema as inventoryCreateVersionSchema,
+  createAllocationServiceLifeRuleSchema,
+  getAllocationServiceLifeEditorSchema,
+  listAllocationServiceLifeRulesSchema,
+  saveAllocationServiceLifeEditorSchema,
+  serviceLifeRuleIdParamSchema,
+  updateAllocationServiceLifeRuleSchema,
   versionIdParamSchema as inventoryVersionIdParamSchema,
 } from "#zodSchemas/inventory.schema.js";
 import { wrapRouter } from "#utils/wrapRouter.js";
@@ -27,6 +33,36 @@ const router = wrapRouter(Router());
 router.use(protectedRoute, requirePermission());
 
 router.get("/catalog-options", categoryController.getCatalogOptions);
+router.get(
+  "/allocation-service-life-rules",
+  validate(listAllocationServiceLifeRulesSchema),
+  categoryController.listAllocationServiceLifeRules,
+);
+router.get(
+  "/allocation-service-life-rules/editor",
+  validate(getAllocationServiceLifeEditorSchema),
+  categoryController.getAllocationServiceLifeEditor,
+);
+router.post(
+  "/allocation-service-life-rules",
+  validate(createAllocationServiceLifeRuleSchema),
+  categoryController.createAllocationServiceLifeRule,
+);
+router.put(
+  "/allocation-service-life-rules/editor",
+  validate(saveAllocationServiceLifeEditorSchema),
+  categoryController.saveAllocationServiceLifeEditor,
+);
+router.patch(
+  "/allocation-service-life-rules/:ruleId",
+  validate(updateAllocationServiceLifeRuleSchema),
+  categoryController.updateAllocationServiceLifeRule,
+);
+router.delete(
+  "/allocation-service-life-rules/:ruleId",
+  validate(serviceLifeRuleIdParamSchema),
+  categoryController.deleteAllocationServiceLifeRule,
+);
 router.get("/versions", categoryController.listVersions);
 router.post(
   "/versions",

@@ -15,6 +15,16 @@ import {
 import { getMilitaryRankLabel } from "#services/militaries/profile-reference.js";
 import { resolveAssignedUnitNameOrThrow } from "#services/militaries/assigned-unit.js";
 
+function inferLegacyTransferInYear({ military, transferYear }) {
+  const candidateYears = [
+    Number(military?.initialCommissioningYear || 0),
+    new Date(military?.createdAt || 0).getFullYear(),
+    Number(transferYear || 0),
+  ].filter((year) => Number.isInteger(year) && year > 0);
+
+  return candidateYears.length > 0 ? Math.min(...candidateYears) : Number(transferYear || new Date().getFullYear());
+}
+
 export async function createCutTransferRequest({
   actor,
   militaryId,
@@ -57,13 +67,30 @@ export async function createCutTransferRequest({
           id: militaryId,
           deletedAt: null,
         },
-        select: {
-          id: true,
-          fullname: true,
-          militaryCode: true,
+      select: {
+        id: true,
+        fullname: true,
+        militaryCode: true,
+        unitId: true,
+        initialCommissioningYear: true,
+        createdAt: true,
+        typeAssignments: {
+          where: {
+            type: {
+              deletedAt: null,
+            },
+          },
+          select: {
+            type: {
+              select: {
+                id: true,
+              },
+            },
+          },
         },
-      }),
-    ]);
+      },
+    }),
+  ]);
     const assignmentAnalysis = analyzeAssignmentHistory({
       assignments: assignmentHistory,
       year: parsedTransferYear,
@@ -71,9 +98,58 @@ export async function createCutTransferRequest({
       scopeUnitId: actorUnitId,
       strictEnd: true,
     });
-    const activeAssignment = assignmentAnalysis.includeAssignment;
+    let activeAssignment = assignmentAnalysis.includeAssignment;
 
-    if (!activeAssignment || !military) {
+    if (!military) {
+      throw new AppError({
+        message: "Không tìm thấy quân nhân đang được bảo đảm",
+        statusCode: HTTP_CODES.NOT_FOUND,
+        errorCode: "MILITARY_NOT_FOUND",
+      });
+    }
+
+    if (!activeAssignment) {
+      const hasSelectedType = (military.typeAssignments || []).some(
+        (item) => Number(item?.type?.id || 0) === Number(parsedTypeId),
+      );
+      const hasAnyTypedHistory = await tx.militaryUnit.findFirst({
+        where: {
+          militaryId,
+          typeId: parsedTypeId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (
+        !hasAnyTypedHistory &&
+        hasSelectedType &&
+        Number(military.unitId || 0) === Number(actorUnitId)
+      ) {
+        activeAssignment = await tx.militaryUnit.create({
+          data: {
+            militaryId,
+            typeId: parsedTypeId,
+            unitId: actorUnitId,
+            transferInYear: inferLegacyTransferInYear({
+              military,
+              transferYear: parsedTransferYear,
+            }),
+          },
+          include: {
+            unit: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+      }
+    }
+
+    if (!activeAssignment) {
       throw new AppError({
         message: "Không tìm thấy quân nhân đang được bảo đảm",
         statusCode: HTTP_CODES.NOT_FOUND,

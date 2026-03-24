@@ -1,6 +1,25 @@
 import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import { ensureAnyRole, ensureSuperAdmin, hasAnyRole } from "#utils/roleGuards.js";
+export { loadExcelLibrary as loadXlsxLibrary } from "#services/spreadsheet/excel.util.js";
+
+const DEFAULT_MULTIPART_MAX_BYTES = 50 * 1024 * 1024;
+
+function getMultipartMaxBytes() {
+  const rawValue = Number.parseInt(process.env.MULTIPART_MAX_BYTES || "", 10);
+  if (Number.isInteger(rawValue) && rawValue > 0) {
+    return rawValue;
+  }
+  return DEFAULT_MULTIPART_MAX_BYTES;
+}
+
+function throwMultipartTooLarge(maxBytes) {
+  throw new AppError({
+    message: `Multipart payload too large. Max ${maxBytes} bytes`,
+    statusCode: HTTP_CODES.PAYLOAD_TOO_LARGE,
+    errorCode: "MULTIPART_PAYLOAD_TOO_LARGE",
+  });
+}
 
 export function parseInteger(value, fieldName) {
   if (value === undefined || value === null || value === "") return null;
@@ -26,19 +45,6 @@ export function parseBooleanLike(value, defaultValue = false) {
   return defaultValue;
 }
 
-export async function loadXlsxLibrary() {
-  try {
-    const module = await import("xlsx");
-    return module.default || module;
-  } catch {
-    throw new AppError({
-      message: "XLSX parser is not installed. Run: npm install xlsx",
-      statusCode: HTTP_CODES.INTERNAL_SERVER_ERROR,
-      errorCode: "XLSX_PARSER_MISSING",
-    });
-  }
-}
-
 function parseMultipartContentDisposition(value) {
   const nameMatch = value.match(/name="([^"]+)"/i);
   const filenameMatch = value.match(/filename="([^"]*)"/i);
@@ -49,11 +55,19 @@ function parseMultipartContentDisposition(value) {
   };
 }
 
-async function readRequestBuffer(req) {
+async function readRequestBuffer(req, maxBytes) {
   const chunks = [];
+  let totalBytes = 0;
 
   for await (const chunk of req) {
-    chunks.push(Buffer.from(chunk));
+    const bufferChunk = Buffer.from(chunk);
+    totalBytes += bufferChunk.length;
+
+    if (totalBytes > maxBytes) {
+      throwMultipartTooLarge(maxBytes);
+    }
+
+    chunks.push(bufferChunk);
   }
 
   return Buffer.concat(chunks);
@@ -62,6 +76,7 @@ async function readRequestBuffer(req) {
 export async function parseMultipartFormData(req) {
   const contentType = req.headers["content-type"] || "";
   const boundaryMatch = contentType.match(/boundary=([^;]+)/i);
+  const maxBytes = getMultipartMaxBytes();
 
   if (!boundaryMatch) {
     throw new AppError({
@@ -71,8 +86,13 @@ export async function parseMultipartFormData(req) {
     });
   }
 
+  const contentLength = Number.parseInt(req.headers["content-length"] || "", 10);
+  if (Number.isInteger(contentLength) && contentLength > maxBytes) {
+    throwMultipartTooLarge(maxBytes);
+  }
+
   const boundary = `--${boundaryMatch[1]}`;
-  const buffer = await readRequestBuffer(req);
+  const buffer = await readRequestBuffer(req, maxBytes);
   const bodyText = buffer.toString("latin1");
   const parts = bodyText
     .split(boundary)

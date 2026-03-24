@@ -1,9 +1,12 @@
 import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import {
-  loadXlsxLibrary,
   normalizeMilitaryGender,
 } from "#services/militaries/common.js";
+import {
+  readWorkbookFromBuffer,
+  worksheetToRowArrays,
+} from "#services/spreadsheet/excel.util.js";
 import { normalizeMilitaryTypeCodesInput } from "#services/militaries/type-catalog.js";
 
 const OPEN_ENDED_TRANSFER_YEAR = 9999;
@@ -27,11 +30,10 @@ function normalizeForcedTypeCode(forcedTypeCode) {
 }
 
 export async function parseXlsxRows(fileBuffer, { forcedTypeCode } = {}) {
-  const XLSX = await loadXlsxLibrary();
   const normalizedForcedTypeCode = normalizeForcedTypeCode(forcedTypeCode);
-
-  const workbook = XLSX.read(fileBuffer, { type: "buffer" });
-  const firstSheetName = workbook.SheetNames?.[0];
+  const workbook = await readWorkbookFromBuffer(fileBuffer);
+  const firstSheet = workbook.worksheets?.[0];
+  const firstSheetName = firstSheet?.name;
 
   if (!firstSheetName) {
     throw new AppError({
@@ -41,12 +43,7 @@ export async function parseXlsxRows(fileBuffer, { forcedTypeCode } = {}) {
     });
   }
 
-  const worksheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    defval: "",
-    raw: false,
-  });
+  const rows = worksheetToRowArrays(firstSheet);
 
   if (!Array.isArray(rows) || rows.length < 2) {
     throw new AppError({

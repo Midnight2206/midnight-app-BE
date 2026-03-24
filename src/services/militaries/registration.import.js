@@ -5,7 +5,6 @@ import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import {
   assertSizeRegistrationAccess,
-  loadXlsxLibrary,
   parseBooleanLike,
   parseMultipartFormData,
   parseInteger,
@@ -15,6 +14,10 @@ import {
   parseRegistrationYear,
   upsertPeriodForYear,
 } from "#services/militaries/registration.shared.js";
+import {
+  readWorkbookFromBuffer,
+  worksheetToRowArrays,
+} from "#services/spreadsheet/excel.util.js";
 
 const SIZE_REGISTRATION_SHEET_NAME = "DangKyCoSo";
 const SIZE_TEMPLATE_META_SHEET_NAME = "HeThongMeta";
@@ -122,8 +125,8 @@ function verifyImportApprovalToken(token) {
   }
 }
 
-function parseMetaSheet(workbook, XLSX) {
-  const metaSheet = workbook.Sheets?.[SIZE_TEMPLATE_META_SHEET_NAME];
+function parseMetaSheet(workbook) {
+  const metaSheet = workbook.getWorksheet(SIZE_TEMPLATE_META_SHEET_NAME);
   if (!metaSheet) {
     throw new AppError({
       message: "Import file is not a valid system template (metadata sheet missing)",
@@ -132,11 +135,7 @@ function parseMetaSheet(workbook, XLSX) {
     });
   }
 
-  const rows = XLSX.utils.sheet_to_json(metaSheet, {
-    header: 1,
-    defval: "",
-    raw: false,
-  });
+  const rows = worksheetToRowArrays(metaSheet);
   const kv = new Map();
   for (let i = 1; i < rows.length; i += 1) {
     const key = String(rows[i]?.[0] || "").trim();
@@ -208,10 +207,9 @@ export async function prepareSizeRegistrationsImportPayload({ actor, req }) {
     ]),
   );
 
-  const XLSX = await loadXlsxLibrary();
   const fileChecksum = hashBufferSha256(files.file.content);
-  const workbook = XLSX.read(files.file.content, { type: "buffer" });
-  const meta = parseMetaSheet(workbook, XLSX);
+  const workbook = await readWorkbookFromBuffer(files.file.content);
+  const meta = parseMetaSheet(workbook);
   const templateUnitId = parseInteger(meta.get("unitId"), "template.unitId");
   const templateYear = parseInteger(meta.get("year"), "template.year");
   if (!templateUnitId || templateUnitId !== actorUnitId) {
@@ -228,7 +226,8 @@ export async function prepareSizeRegistrationsImportPayload({ actor, req }) {
       errorCode: "TEMPLATE_YEAR_MISMATCH",
     });
   }
-  const firstSheetName = workbook.SheetNames?.[0];
+  const firstSheet = workbook.worksheets?.[0];
+  const firstSheetName = firstSheet?.name;
 
   if (!firstSheetName) {
     throw new AppError({
@@ -245,12 +244,7 @@ export async function prepareSizeRegistrationsImportPayload({ actor, req }) {
     });
   }
 
-  const worksheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    defval: "",
-    raw: false,
-  });
+  const rows = worksheetToRowArrays(firstSheet);
 
   if (!Array.isArray(rows) || rows.length < 2) {
     throw new AppError({

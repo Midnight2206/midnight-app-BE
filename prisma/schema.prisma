@@ -39,6 +39,11 @@ model User {
   stockAdjustments              StockAdjustmentLog[]
   allocationIssueLogsCreated    SupplyAllocationIssueLog[]
   allocationIssueVouchers       SupplyAllocationIssueVoucher[]
+  allocationModesCreated        AllocationMode[]            @relation("AllocationModesCreatedBy")
+  allocationModeIssueVouchers   AllocationModeIssueVoucher[] @relation("AllocationModeIssueVouchersCreatedBy")
+  allocationModeCategoryBaselinesImported AllocationModeMilitaryCategoryBaseline[] @relation("AllocationModeCategoryBaselineImportedBy")
+  printTemplatesCreated         PrintTemplate[]            @relation("PrintTemplatesCreatedBy")
+  printTemplateVersionsCreated  PrintTemplateVersion[]     @relation("PrintTemplateVersionsCreatedBy")
   militaryTransferLogsCreated   MilitaryTransferLog[]
 
   @@index([unitId])
@@ -195,6 +200,11 @@ model Military {
   registrationRequests SizeRegistrationRequest[]
   allocationIssueLogs  SupplyAllocationIssueLog[]
   allocationIssueVouchers SupplyAllocationIssueVoucher[]
+  allocationModeIncludes AllocationModeMilitaryInclude[]
+  allocationModeExcludes AllocationModeMilitaryExclude[]
+  allocationModeIssueVouchers AllocationModeIssueVoucher[]
+  allocationModeCategoryStatuses AllocationModeMilitaryCategoryStatus[]
+  allocationModeCategoryBaselines AllocationModeMilitaryCategoryBaseline[]
   allocationSubjectMemberships MilitaryAllocationSubjectMembership[]
   typeAssignments      MilitaryTypeAssignment[]
   transferLogs         MilitaryTransferLog[]
@@ -238,6 +248,13 @@ model MilitaryTypeCatalog {
   assignments      MilitaryTypeAssignment[]
   militaryUnits    MilitaryUnit[]
   transferRequests MilitaryTransferRequest[]
+  allocationServiceLifeRules SupplyAllocationServiceLifeRule[]
+  allocationIssueLogsApplied SupplyAllocationIssueLog[] @relation("AppliedAllocationTypeIssueLogs")
+  allocationIssueVoucherItemsApplied SupplyAllocationIssueVoucherItem[] @relation("AppliedAllocationTypeVoucherItems")
+  allocationModeTypes AllocationModeMilitaryType[]
+  allocationModeIssueVoucherItemsApplied AllocationModeIssueVoucherItem[] @relation("AllocationModeIssueVoucherItemsApplied")
+  allocationModeCategoryStatuses AllocationModeMilitaryCategoryStatus[]
+  allocationModeCategoryBaselines AllocationModeMilitaryCategoryBaseline[]
 
   @@index([deletedAt])
   @@map("military_type_catalogs")
@@ -307,7 +324,12 @@ model Unit {
   warehouses           Warehouse[]
   allocationSubjects   SupplyAllocationSubject[]
   allocationStandards  SupplyAllocationStandard[]
+  allocationServiceLifeRules SupplyAllocationServiceLifeRule[]
   allocationIssueVouchers SupplyAllocationIssueVoucher[]
+  allocationModes AllocationMode[]
+  allocationModeIssueVouchers AllocationModeIssueVoucher[]
+  allocationModeCategoryBaselines AllocationModeMilitaryCategoryBaseline[]
+  printTemplates      PrintTemplate[]
 
   @@map("units")
 }
@@ -414,6 +436,11 @@ model Category {
   registrationRequestItems SizeRegistrationRequestItem[]
   supplyItems              SupplyItem[]
   allocationStandards      SupplyAllocationStandard[]
+  allocationServiceLifeRules SupplyAllocationServiceLifeRule[]
+  allocationModeCategories AllocationModeCategory[]
+  allocationModeIssueVoucherItems AllocationModeIssueVoucherItem[]
+  allocationModeCategoryStatuses AllocationModeMilitaryCategoryStatus[]
+  allocationModeCategoryBaselines AllocationModeMilitaryCategoryBaseline[]
 
   @@index([unitOfMeasureId])
   @@index([versionId])
@@ -731,6 +758,47 @@ enum MilitaryRank {
   THUONG_SI
 }
 
+enum AllocationModeScope {
+  SYSTEM
+  UNIT
+}
+
+enum PrintTemplateType {
+  ALLOCATION_MODE_ISSUE_VOUCHER
+}
+
+enum AllocationModeIssueVoucherPurpose {
+  MODE
+  OTHER
+}
+
+enum AllocationModeRuleCombinator {
+  ALL
+  ANY
+}
+
+enum AllocationModeRuleValueSource {
+  STATIC
+  ISSUE_YEAR
+  CURRENT_YEAR
+}
+
+enum AllocationModeRuleOperator {
+  EQ
+  NEQ
+  GT
+  GTE
+  LT
+  LTE
+  IN
+  NOT_IN
+  CONTAINS
+  STARTS_WITH
+  ENDS_WITH
+  IS_TRUE
+  IS_FALSE
+}
+
 //////////////////////////////////////////////////////
 // INVENTORY
 //////////////////////////////////////////////////////
@@ -802,6 +870,97 @@ model SupplyAllocationSubject {
   @@map("supply_allocation_subjects")
 }
 
+model AllocationMode {
+  id             String                        @id @default(uuid())
+  scope          AllocationModeScope
+  ownerKey       String
+  unitId         Int?
+  code           String?
+  name           String
+  nameNormalized String
+  description    String?                       @db.Text
+  isActive       Boolean                       @default(true)
+  ruleCombinator AllocationModeRuleCombinator @default(ALL)
+  ruleConfig     Json?
+  createdById    String?
+  createdAt      DateTime                      @default(now())
+  updatedAt      DateTime                      @updatedAt
+  deletedAt      DateTime?
+
+  unit                Unit?                       @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  createdBy           User?                       @relation("AllocationModesCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  categories          AllocationModeCategory[]
+  militaryTypes       AllocationModeMilitaryType[]
+  includedMilitaries  AllocationModeMilitaryInclude[]
+  excludedMilitaries  AllocationModeMilitaryExclude[]
+  issueVouchers       AllocationModeIssueVoucher[]
+
+  @@unique([ownerKey, nameNormalized], map: "allocation_modes_owner_name_uk")
+  @@unique([ownerKey, code], map: "allocation_modes_owner_code_uk")
+  @@index([scope, unitId, deletedAt], map: "allocation_modes_scope_unit_deleted_idx")
+  @@index([createdById], map: "allocation_modes_created_by_idx")
+  @@map("allocation_modes")
+}
+
+model AllocationModeCategory {
+  id         String   @id @default(uuid())
+  modeId      String
+  categoryId  Int
+  quantity    Int      @default(0)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  mode        AllocationMode              @relation(fields: [modeId], references: [id], onDelete: Cascade)
+  category    Category                    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  voucherItems AllocationModeIssueVoucherItem[]
+
+  @@unique([modeId, categoryId], map: "allocation_mode_categories_mode_cat_uk")
+  @@index([modeId, deletedAt], map: "allocation_mode_categories_mode_deleted_idx")
+  @@index([categoryId], map: "allocation_mode_categories_category_idx")
+  @@map("allocation_mode_categories")
+}
+
+model AllocationModeMilitaryType {
+  modeId String
+  typeId Int
+
+  mode AllocationMode      @relation(fields: [modeId], references: [id], onDelete: Cascade)
+  type MilitaryTypeCatalog @relation(fields: [typeId], references: [id], onDelete: Restrict)
+
+  @@id([modeId, typeId])
+  @@index([typeId], map: "allocation_mode_types_type_idx")
+  @@map("allocation_mode_types")
+}
+
+model AllocationModeMilitaryInclude {
+  modeId     String
+  militaryId String
+  createdAt  DateTime @default(now())
+
+  mode     AllocationMode @relation(fields: [modeId], references: [id], onDelete: Cascade)
+  military Military       @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+
+  @@id([modeId, militaryId])
+  @@index([militaryId], map: "allocation_mode_include_military_idx")
+  @@map("allocation_mode_military_includes")
+}
+
+model AllocationModeMilitaryExclude {
+  modeId     String
+  militaryId String
+  createdAt  DateTime @default(now())
+
+  mode     AllocationMode @relation(fields: [modeId], references: [id], onDelete: Cascade)
+  military Military       @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+
+  @@id([modeId, militaryId])
+  @@index([militaryId], map: "allocation_mode_exclude_military_idx")
+  @@map("allocation_mode_military_excludes")
+}
+
 model MilitaryAllocationSubjectMembership {
   id              String   @id @default(uuid())
   militaryId      String
@@ -840,6 +999,29 @@ model SupplyAllocationStandard {
   @@index([unitId, deletedAt])
   @@index([subjectId, deletedAt])
   @@map("supply_allocation_standards")
+}
+
+model SupplyAllocationServiceLifeRule {
+  id               Int      @id @default(autoincrement())
+  unitId           Int
+  typeId           Int
+  categoryId       Int
+  serviceLifeYears Int
+  gender           AllocationRuleGender @default(ANY)
+  rankGroup        AllocationRankGroup  @default(ANY)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  unit     Unit                @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  type     MilitaryTypeCatalog @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  category Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@unique([unitId, typeId, categoryId], map: "saslr_unit_type_cat_uk")
+  @@index([unitId, deletedAt], map: "saslr_unit_deleted_idx")
+  @@index([typeId], map: "saslr_type_idx")
+  @@index([categoryId], map: "saslr_category_idx")
+  @@map("supply_allocation_service_life_rules")
 }
 
 model SupplyAllocationStandardItem {
@@ -913,6 +1095,7 @@ model SupplyAllocationIssueLog {
   itemId      Int
   warehouseId Int?
   voucherId   String?
+  appliedTypeId Int?
   quantity    Int
   issuedAt    DateTime @default(now())
   issuedYear  Int
@@ -925,6 +1108,7 @@ model SupplyAllocationIssueLog {
   warehouse    Warehouse?                   @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
   voucher      SupplyAllocationIssueVoucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
   createdBy    User?                        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  appliedType  MilitaryTypeCatalog?         @relation("AppliedAllocationTypeIssueLogs", fields: [appliedTypeId], references: [id], onDelete: SetNull)
 
   @@index([militaryId, itemId, issuedAt])
   @@index([standardId, issuedAt])
@@ -932,6 +1116,7 @@ model SupplyAllocationIssueLog {
   @@index([voucherId])
   @@index([issuedYear])
   @@index([createdById])
+  @@index([appliedTypeId])
   @@map("supply_allocation_issue_logs")
 }
 
@@ -970,6 +1155,9 @@ model SupplyAllocationIssueVoucherItem {
   voucherId          String
   standardId         Int
   itemId             Int
+  appliedTypeId      Int?
+  appliedTypeCode    String?
+  appliedTypeName    String?
   quantity           Int
   itemName           String
   itemCode           String?
@@ -980,9 +1168,11 @@ model SupplyAllocationIssueVoucherItem {
 
   voucher      SupplyAllocationIssueVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
   standardItem SupplyAllocationStandardItem @relation(fields: [standardId, itemId], references: [standardId, itemId], onDelete: Restrict)
+  appliedType  MilitaryTypeCatalog?         @relation("AppliedAllocationTypeVoucherItems", fields: [appliedTypeId], references: [id], onDelete: SetNull)
 
   @@index([voucherId])
   @@index([standardId, itemId])
+  @@index([appliedTypeId])
   @@map("supply_allocation_issue_voucher_items")
 }
 
@@ -1001,6 +1191,7 @@ model Warehouse {
   stockAdjustments StockAdjustmentLog[]
   allocationIssueLogs SupplyAllocationIssueLog[]
   allocationIssueVouchers SupplyAllocationIssueVoucher[]
+  allocationModeIssueVouchers AllocationModeIssueVoucher[]
   categoryWarehouseStocks  CategoryWarehouseStock[]
 
   @@unique([unitId, nameNormalized])
@@ -1050,6 +1241,169 @@ model CategoryWarehouseStock {
   @@id([warehouseId, variantId])
   @@index([variantId])
   @@map("category_warehouse_stocks")
+}
+
+model PrintTemplate {
+  id              String            @id @default(uuid())
+  unitId          Int
+  type            PrintTemplateType
+  name            String
+  description     String?           @db.Text
+  activeVersionId String?
+  createdById     String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?
+
+  unit                     Unit                       @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  activeVersion            PrintTemplateVersion?      @relation("PrintTemplateActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  createdBy                User?                      @relation("PrintTemplatesCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  versions                 PrintTemplateVersion[]     @relation("PrintTemplateVersions")
+  allocationModeVouchers   AllocationModeIssueVoucher[] @relation("AllocationModeIssueVoucherPrintTemplate")
+
+  @@unique([unitId, type], map: "print_templates_unit_type_uk")
+  @@index([unitId, deletedAt], map: "print_templates_unit_deleted_idx")
+  @@index([createdById], map: "print_templates_created_by_idx")
+  @@map("print_templates")
+}
+
+model PrintTemplateVersion {
+  id              String        @id @default(uuid())
+  templateId      String
+  versionNo       Int
+  config          Json
+  createdById     String?
+  createdAt       DateTime      @default(now())
+
+  template                    PrintTemplate               @relation("PrintTemplateVersions", fields: [templateId], references: [id], onDelete: Cascade)
+  createdBy                   User?                       @relation("PrintTemplateVersionsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  activeForTemplates          PrintTemplate[]             @relation("PrintTemplateActiveVersion")
+  allocationModeVoucherUsages AllocationModeIssueVoucher[] @relation("AllocationModeIssueVoucherPrintTemplateVersion")
+
+  @@unique([templateId, versionNo], map: "print_template_versions_template_version_uk")
+  @@index([createdById], map: "print_template_versions_created_by_idx")
+  @@index([templateId, createdAt], map: "print_template_versions_template_created_idx")
+  @@map("print_template_versions")
+}
+
+model AllocationModeIssueVoucher {
+  id           String   @id @default(uuid())
+  voucherNo     String   @unique
+  purpose      AllocationModeIssueVoucherPurpose @default(MODE)
+  unitId        Int
+  warehouseId   Int
+  modeId        String?
+  militaryId    String?
+  printTemplateType PrintTemplateType?
+  printTemplateId String?
+  printTemplateVersionId String?
+  printTemplateVersionNo Int?
+  printTemplateSnapshot Json?
+  receiverName  String?
+  issuedAt      DateTime
+  issuedYear    Int
+  reason        String?
+  note          String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  unit       Unit           @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  warehouse  Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  mode       AllocationMode? @relation(fields: [modeId], references: [id], onDelete: Restrict)
+  military   Military?       @relation(fields: [militaryId], references: [id], onDelete: Restrict)
+  createdBy  User?          @relation("AllocationModeIssueVouchersCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  printTemplate PrintTemplate? @relation("AllocationModeIssueVoucherPrintTemplate", fields: [printTemplateId], references: [id], onDelete: SetNull)
+  printTemplateVersion PrintTemplateVersion? @relation("AllocationModeIssueVoucherPrintTemplateVersion", fields: [printTemplateVersionId], references: [id], onDelete: SetNull)
+  items      AllocationModeIssueVoucherItem[]
+
+  @@index([unitId, purpose, issuedYear], map: "allocation_mode_vouchers_unit_purpose_year_idx")
+  @@index([unitId, issuedYear], map: "allocation_mode_vouchers_unit_year_idx")
+  @@index([modeId, issuedAt], map: "allocation_mode_vouchers_mode_issued_idx")
+  @@index([militaryId, issuedAt], map: "allocation_mode_vouchers_military_issued_idx")
+  @@index([warehouseId], map: "allocation_mode_vouchers_warehouse_idx")
+  @@index([printTemplateId], map: "allocation_mode_vouchers_print_template_idx")
+  @@index([printTemplateVersionId], map: "allocation_mode_vouchers_print_template_version_idx")
+  @@map("allocation_mode_issue_vouchers")
+}
+
+model AllocationModeMilitaryCategoryStatus {
+  id               String   @id @default(uuid())
+  militaryId       String
+  categoryId       Int
+  typeId           Int?
+  latestIssuedYear Int
+  latestIssuedAt   DateTime
+  lastVoucherId    String?
+  lastModeId       String?
+  lastQuantity     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  military Military @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  type     MilitaryTypeCatalog? @relation(fields: [typeId], references: [id], onDelete: SetNull)
+
+  @@unique([militaryId, categoryId, typeId], map: "allocation_mode_military_category_status_uk")
+  @@index([categoryId], map: "allocation_mode_category_status_category_idx")
+  @@index([typeId], map: "allocation_mode_category_status_type_idx")
+  @@index([latestIssuedYear], map: "allocation_mode_category_status_year_idx")
+  @@map("allocation_mode_military_category_statuses")
+}
+
+model AllocationModeMilitaryCategoryBaseline {
+  id               String   @id @default(uuid())
+  unitId           Int
+  militaryId       String
+  categoryId       Int
+  typeId           Int
+  latestIssuedYear Int
+  importedById     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  unit       Unit                @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  military   Military            @relation(fields: [militaryId], references: [id], onDelete: Cascade)
+  category   Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  type       MilitaryTypeCatalog @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  importedBy User?               @relation("AllocationModeCategoryBaselineImportedBy", fields: [importedById], references: [id], onDelete: SetNull)
+
+  @@unique([militaryId, categoryId, typeId], map: "allocation_mode_category_baselines_military_category_type_uk")
+  @@index([unitId, typeId], map: "allocation_mode_category_baselines_unit_type_idx")
+  @@index([categoryId], map: "allocation_mode_category_baselines_category_idx")
+  @@index([importedById], map: "allocation_mode_category_baselines_imported_by_idx")
+  @@map("allocation_mode_military_category_baselines")
+}
+
+model AllocationModeIssueVoucherItem {
+  id                   String   @id @default(uuid())
+  voucherId            String
+  modeCategoryId       String?
+  categoryId           Int
+  versionId            Int?
+  colorId              Int?
+  appliedTypeId        Int?
+  quantity             Int
+  serviceLifeYears     Int
+  lastIssuedYear       Int?
+  nextEligibleYear     Int?
+  wasDue               Boolean  @default(false)
+  categoryName         String
+  versionName          String?
+  colorName            String?
+  unitOfMeasureName    String?
+  createdAt            DateTime @default(now())
+
+  voucher      AllocationModeIssueVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  modeCategory AllocationModeCategory?    @relation(fields: [modeCategoryId], references: [id], onDelete: Restrict)
+  category     Category                   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  appliedType  MilitaryTypeCatalog?       @relation("AllocationModeIssueVoucherItemsApplied", fields: [appliedTypeId], references: [id], onDelete: SetNull)
+
+  @@index([voucherId], map: "allocation_mode_voucher_items_voucher_idx")
+  @@index([modeCategoryId], map: "allocation_mode_voucher_items_category_link_idx")
+  @@index([categoryId], map: "allocation_mode_voucher_items_category_idx")
+  @@index([appliedTypeId], map: "allocation_mode_voucher_items_type_idx")
+  @@map("allocation_mode_issue_voucher_items")
 }
 
 model StockAdjustmentLog {

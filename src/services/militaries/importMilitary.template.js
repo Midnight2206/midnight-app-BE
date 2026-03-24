@@ -1,5 +1,9 @@
-import { loadXlsxLibrary } from "#services/militaries/common.js";
 import { normalizeMilitaryTypeCodesInput } from "#services/militaries/type-catalog.js";
+import {
+  appendWorksheetFromRows,
+  createWorkbook,
+  writeWorkbookToBuffer,
+} from "#services/spreadsheet/excel.util.js";
 
 export function getTemplateFileName() {
   return "military-import-template.xlsx";
@@ -16,7 +20,6 @@ function normalizeTemplateTypeCode(type) {
 }
 
 export async function getTemplate({ type } = {}) {
-  const XLSX = await loadXlsxLibrary();
   const templateTypeCode = normalizeTemplateTypeCode(type);
 
   const headers = [
@@ -86,16 +89,12 @@ export async function getTemplate({ type } = {}) {
     ["- unitTransferOutYear để trống nếu quân nhân đang còn trong đơn vị hiện tại"],
   ];
 
-  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...sampleRows, ...notes]);
-  worksheet["!cols"] = headers.map((header) => ({
-    wch: Math.max(header.length + 2, 18),
-  }));
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "militaries");
-
-  return XLSX.write(workbook, {
-    type: "buffer",
-    bookType: "xlsx",
+  const workbook = await createWorkbook();
+  appendWorksheetFromRows(workbook, {
+    name: "militaries",
+    rows: [headers, ...sampleRows, ...notes],
+    widths: headers.map((header) => Math.max(header.length + 2, 18)),
   });
+
+  return writeWorkbookToBuffer(workbook);
 }

@@ -39,7 +39,19 @@ export function csrfProtection(req, res, next) {
   if (allowedOrigins.length === 0) return next();
 
   const requestOrigin = resolveRequestOrigin(req);
-  if (!requestOrigin) return next();
+  if (!requestOrigin) {
+    return next(
+      new AppError({
+        message: "CSRF protection blocked this request",
+        statusCode: HTTP_CODES.FORBIDDEN,
+        errorCode: "CSRF_ORIGIN_MISSING",
+        metadata:
+          process.env.NODE_ENV === "development"
+            ? { allowedOrigins }
+            : undefined,
+      }),
+    );
+  }
 
   if (allowedOrigins.includes(requestOrigin)) {
     return next();

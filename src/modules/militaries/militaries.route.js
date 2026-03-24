@@ -10,11 +10,15 @@ import {
   createMilitaryTypeSchema,
   createCutTransferRequestSchema,
   cutMilitaryAssuranceSchema,
+  allocationModeBaselineTemplateSchema,
+  getMilitaryPersonalLedgerSchema,
+  getMyPersonalLedgerSchema,
   militaryTypeIdParamSchema,
   requestIdParamSchema,
   receiveMilitaryAssuranceSchema,
   transferMilitaryAssuranceSchema,
   updateAssignedUnitSchema,
+  updateMilitaryFromPersonalLedgerSchema,
   updateMilitarySizeRegistrationsSchema,
 } from "#zodSchemas/military.schema.js";
 import { wrapRouter } from "#utils/wrapRouter.js";
@@ -23,6 +27,20 @@ import { protectedRoute } from "#middlewares/routerMeta.js";
 import { requirePermission } from "#middlewares/requiredPermission.js";
 
 const router = wrapRouter(Router());
+
+router.get(
+  "/me/personal-ledger",
+  protectedRoute,
+  validate(getMyPersonalLedgerSchema),
+  militariesController.getMyPersonalLedger,
+);
+
+router.get(
+  "/:militaryId/personal-ledger",
+  protectedRoute,
+  validate(getMilitaryPersonalLedgerSchema),
+  militariesController.getMilitaryPersonalLedger,
+);
 
 /* =======================
    APPLY RBAC FOR WHOLE MODULE
@@ -34,6 +52,17 @@ router.use(protectedRoute, requirePermission());
 ======================= */
 
 router.get("/", militariesController.list);
+
+router.get(
+  "/allocation-mode-baselines/template",
+  validate(allocationModeBaselineTemplateSchema),
+  militariesController.downloadAllocationModeBaselineTemplate,
+);
+
+router.post(
+  "/allocation-mode-baselines/import",
+  militariesController.importAllocationModeBaselineTemplate,
+);
 
 router.get("/units", militariesController.listUnits);
 
@@ -117,6 +146,12 @@ router.post(
 router.get(
   "/:militaryId/registrations",
   militariesController.getMilitaryRegistrations,
+);
+
+router.patch(
+  "/:militaryId",
+  validate(updateMilitaryFromPersonalLedgerSchema),
+  militariesController.updateMilitaryFromPersonalLedger,
 );
 
 router.put(

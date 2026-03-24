@@ -4,13 +4,19 @@ import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import {
   assertSizeRegistrationAccess,
-  loadXlsxLibrary,
   parseBooleanLike,
 } from "#services/militaries/common.js";
 import {
   getRegistrationCategories,
   parseRegistrationYear,
 } from "#services/militaries/registration.shared.js";
+import {
+  appendWorksheetFromRows,
+  applyListValidationRules,
+  createWorkbook,
+  writeWorkbookToBuffer,
+  columnNumberToName,
+} from "#services/spreadsheet/excel.util.js";
 
 const SIZE_REGISTRATION_TEMPLATE_FILE_PREFIX = "size-registration-template";
 const SIZE_REGISTRATION_SHEET_NAME = "DangKyCoSo";
@@ -18,76 +24,6 @@ const SIZE_OPTIONS_SHEET_NAME = "DanhMucCoSo";
 const SIZE_TEMPLATE_META_SHEET_NAME = "HeThongMeta";
 const SIZE_TEMPLATE_TYPE = "SIZE_REGISTRATION";
 const SIZE_TEMPLATE_VERSION = "1";
-
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function toExcelColumnName(columnIndex) {
-  let dividend = columnIndex;
-  let columnName = "";
-
-  while (dividend > 0) {
-    const modulo = (dividend - 1) % 26;
-    columnName = String.fromCharCode(65 + modulo) + columnName;
-    dividend = Math.floor((dividend - modulo) / 26);
-  }
-
-  return columnName;
-}
-
-function buildDataValidationXml(rules) {
-  if (!rules.length) return "";
-
-  const validationRows = rules
-    .map(
-      (rule) =>
-        `<dataValidation type="list" allowBlank="1" showErrorMessage="1" errorStyle="stop" sqref="${escapeXml(
-          rule.sqref,
-        )}"><formula1>${escapeXml(rule.formula1)}</formula1></dataValidation>`,
-    )
-    .join("");
-
-  return `<dataValidations count="${rules.length}">${validationRows}</dataValidations>`;
-}
-
-function injectDataValidationToFirstWorksheet(xlsxBuffer, dataValidationXml, XLSX) {
-  if (!dataValidationXml) return xlsxBuffer;
-
-  const cfb = XLSX.CFB.read(xlsxBuffer, { type: "buffer" });
-  const sheetEntry = cfb.FileIndex.find((entry) => entry.name === "sheet1.xml");
-
-  if (!sheetEntry) return xlsxBuffer;
-
-  const sheetXml = Buffer.isBuffer(sheetEntry.content)
-    ? sheetEntry.content.toString("utf8")
-    : String(sheetEntry.content || "");
-
-  const cleanedXml = sheetXml.replace(
-    /<dataValidations[\s\S]*?<\/dataValidations>/g,
-    "",
-  );
-  const hasIgnoredErrors = /<ignoredErrors[\s\S]*?<\/ignoredErrors>/i.test(
-    cleanedXml,
-  );
-  const injectedXml = hasIgnoredErrors
-    ? cleanedXml.replace(
-        /<ignoredErrors/i,
-        `${dataValidationXml}<ignoredErrors`,
-      )
-    : cleanedXml.replace(
-        /<\/worksheet>\s*$/i,
-        `${dataValidationXml}</worksheet>`,
-      );
-
-  sheetEntry.content = Buffer.from(injectedXml, "utf8");
-  return XLSX.CFB.write(cfb, { type: "buffer", fileType: "zip" });
-}
 
 function parseCategoryIdsInput(rawValue) {
   if (rawValue === undefined || rawValue === null || rawValue === "") return [];
@@ -126,7 +62,6 @@ export async function getSizeRegistrationTemplate({
 }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
   const selectedYear = parseRegistrationYear(rawYear);
-  const XLSX = await loadXlsxLibrary();
   const categories = await getRegistrationCategories();
   const selectedCategoryIds = parseCategoryIdsInput(rawCategoryIds);
   const hasCategoryFilter = selectedCategoryIds.length > 0;
@@ -221,13 +156,6 @@ export async function getSizeRegistrationTemplate({
   });
 
   const templateRows = [mainHeaderRow, ...dataRows];
-  const mainSheet = XLSX.utils.aoa_to_sheet(templateRows);
-  mainSheet["!cols"] = [
-    { wch: 18 },
-    { wch: 24 },
-    { wch: 20 },
-    ...categoryColumns.map(() => ({ wch: 24 })),
-  ];
 
   const optionHeaderRow = categoryColumns.map(
     (column) => `CAT_${column.id} - ${column.name}`,
@@ -239,12 +167,18 @@ export async function getSizeRegistrationTemplate({
     optionRows.push(categoryColumns.map((column) => column.sizes[rowIndex]?.name || ""));
   }
 
-  const optionsSheet = XLSX.utils.aoa_to_sheet(optionRows);
-  optionsSheet["!cols"] = categoryColumns.map(() => ({ wch: 24 }));
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, mainSheet, SIZE_REGISTRATION_SHEET_NAME);
-  XLSX.utils.book_append_sheet(workbook, optionsSheet, SIZE_OPTIONS_SHEET_NAME);
+  const workbook = await createWorkbook();
+  const mainSheet = appendWorksheetFromRows(workbook, {
+    name: SIZE_REGISTRATION_SHEET_NAME,
+    rows: templateRows,
+    widths: [18, 24, 20, ...categoryColumns.map(() => 24)],
+  });
+  appendWorksheetFromRows(workbook, {
+    name: SIZE_OPTIONS_SHEET_NAME,
+    rows: optionRows,
+    widths: categoryColumns.map(() => 24),
+    state: "hidden",
+  });
   const metaRows = [
     ["key", "value"],
     ["templateType", SIZE_TEMPLATE_TYPE],
@@ -259,19 +193,10 @@ export async function getSizeRegistrationTemplate({
     ["frameEndCol", String(mainHeaderRow.length)],
     ["headerSignature", parseHeaderSignature(mainHeaderRow)],
   ];
-  const metaSheet = XLSX.utils.aoa_to_sheet(metaRows);
-  XLSX.utils.book_append_sheet(workbook, metaSheet, SIZE_TEMPLATE_META_SHEET_NAME);
-  workbook.Workbook = workbook.Workbook || {};
-  workbook.Workbook.Sheets = [
-    { name: SIZE_REGISTRATION_SHEET_NAME, Hidden: 0 },
-    { name: SIZE_OPTIONS_SHEET_NAME, Hidden: 1 },
-    { name: SIZE_TEMPLATE_META_SHEET_NAME, Hidden: 1 },
-  ];
-
-  let fileBuffer = XLSX.write(workbook, {
-    type: "buffer",
-    bookType: "xlsx",
-    compression: true,
+  appendWorksheetFromRows(workbook, {
+    name: SIZE_TEMPLATE_META_SHEET_NAME,
+    rows: metaRows,
+    state: "hidden",
   });
 
   const maxInputRow = Math.max(500, dataRows.length + 500);
@@ -279,8 +204,8 @@ export async function getSizeRegistrationTemplate({
     .map((column, index) => {
       if (!column.sizes.length) return null;
 
-      const targetCol = toExcelColumnName(4 + index);
-      const optionsCol = toExcelColumnName(1 + index);
+      const targetCol = columnNumberToName(4 + index);
+      const optionsCol = columnNumberToName(1 + index);
       const optionEndRow = 1 + column.sizes.length;
 
       return {
@@ -290,8 +215,7 @@ export async function getSizeRegistrationTemplate({
     })
     .filter(Boolean);
 
-  const dataValidationXml = buildDataValidationXml(dataValidationRules);
-  fileBuffer = injectDataValidationToFirstWorksheet(fileBuffer, dataValidationXml, XLSX);
+  applyListValidationRules(mainSheet, dataValidationRules);
 
-  return fileBuffer;
+  return writeWorkbookToBuffer(workbook);
 }

@@ -6,7 +6,7 @@ function normalizeTransferEndYear(year) {
 
 function matchesTypeScope({ assignment, typeId }) {
   if (!Number.isInteger(typeId)) return true;
-  return assignment?.typeId === typeId || assignment?.typeId === null;
+  return Number(assignment?.typeId || 0) === Number(typeId);
 }
 
 function matchesUnitScope({ assignment, scopeUnitId }) {
@@ -77,9 +77,26 @@ export function getScopedAssignmentHistory({
   typeId = null,
   scopeUnitId = null,
 } = {}) {
+  const unitScopedAssignments = assignments.filter((assignment) =>
+    matchesUnitScope({ assignment, scopeUnitId }),
+  );
+
+  if (!Number.isInteger(typeId)) {
+    return sortAssignmentHistory(unitScopedAssignments);
+  }
+
+  const exactTypeAssignments = unitScopedAssignments.filter((assignment) =>
+    matchesTypeScope({ assignment, typeId }),
+  );
+
+  if (exactTypeAssignments.length > 0) {
+    return sortAssignmentHistory(exactTypeAssignments);
+  }
+
+  // Backward-compatible fallback for old generic rows before per-type history was introduced.
   return sortAssignmentHistory(
-    assignments.filter((assignment) =>
-      matchesAssignmentScope({ assignment, typeId, scopeUnitId }),
+    unitScopedAssignments.filter(
+      (assignment) => assignment?.typeId === null || assignment?.typeId === undefined,
     ),
   );
 }

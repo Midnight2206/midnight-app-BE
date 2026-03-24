@@ -57,6 +57,41 @@ function mapSubject(subject) {
   };
 }
 
+function mapMilitaryType(type) {
+  if (!type) return null;
+  return {
+    id: type.id,
+    code: type.code,
+    name: type.name || null,
+  };
+}
+
+function mapServiceLifeRule(rule) {
+  return {
+    id: rule.id,
+    unitId: rule.unitId,
+    unit: rule.unit
+      ? {
+          id: rule.unit.id,
+          name: rule.unit.name,
+        }
+      : null,
+    type: mapMilitaryType(rule.type),
+    category: rule.category
+      ? {
+          id: rule.category.id,
+          name: rule.category.name,
+        }
+      : null,
+    serviceLifeYears: rule.serviceLifeYears,
+    gender: String(rule.gender || "ANY"),
+    rankGroup: String(rule.rankGroup || "ANY"),
+    createdAt: rule.createdAt,
+    updatedAt: rule.updatedAt,
+    deletedAt: rule.deletedAt,
+  };
+}
+
 export async function ensureDefaultAllocationSubjects({ unitId, db = prisma } = {}) {
   const scopedUnitId = Number.parseInt(unitId, 10);
   if (!Number.isInteger(scopedUnitId) || scopedUnitId <= 0) {
@@ -122,6 +157,26 @@ function parseServiceLifeYears(value) {
     throwBadRequest("Niên hạn cấp phát không hợp lệ", "INVALID_SERVICE_LIFE_YEARS");
   }
   return years;
+}
+
+function parseAllocationRuleGender(value, fallback = "ANY") {
+  const gender = String(value || fallback)
+    .trim()
+    .toUpperCase();
+  if (!ALLOCATION_GENDERS.has(gender)) {
+    throwBadRequest("gender không hợp lệ", "INVALID_ALLOCATION_RULE_GENDER");
+  }
+  return gender;
+}
+
+function parseAllocationRankGroup(value, fallback = "ANY") {
+  const rankGroup = String(value || fallback)
+    .trim()
+    .toUpperCase();
+  if (!ALLOCATION_RANK_GROUPS.has(rankGroup)) {
+    throwBadRequest("rankGroup không hợp lệ", "INVALID_ALLOCATION_RANK_GROUP");
+  }
+  return rankGroup;
 }
 
 function parseDateTimeOrNow(value) {
@@ -216,6 +271,62 @@ function isStandardConditionMatched({ standardCondition, military, asOfYear }) {
 
 function getYearFromDate(date) {
   return new Date(date).getUTCFullYear();
+}
+
+function resolveServiceLifeTimeline({
+  issueYears = [],
+  referenceYear,
+  serviceLifeYears,
+}) {
+  const normalizedYears = [...new Set(
+    (issueYears || [])
+      .map((year) => Number(year))
+      .filter((year) => Number.isInteger(year)),
+  )].sort((left, right) => left - right);
+
+  let previousIssuedYear = null;
+  let nextIssuedYear = null;
+
+  normalizedYears.forEach((year) => {
+    if (year <= Number(referenceYear)) {
+      previousIssuedYear = year;
+      return;
+    }
+    if (nextIssuedYear === null) {
+      nextIssuedYear = year;
+    }
+  });
+
+  const normalizedServiceLifeYears = Number(serviceLifeYears || 0);
+  const nextEligibleYear =
+    previousIssuedYear !== null && normalizedServiceLifeYears > 0
+      ? previousIssuedYear + normalizedServiceLifeYears
+      : null;
+  const windowCycleSpan =
+    previousIssuedYear !== null &&
+    nextIssuedYear !== null &&
+    normalizedServiceLifeYears > 0
+      ? (nextIssuedYear - previousIssuedYear) / normalizedServiceLifeYears
+      : null;
+  const overdueByHistoricalWindow =
+    nextEligibleYear !== null &&
+    Number(referenceYear) >= Number(nextEligibleYear) &&
+    windowCycleSpan !== null &&
+    windowCycleSpan > 2;
+  const dueByServiceLife =
+    previousIssuedYear === null ||
+    normalizedServiceLifeYears <= 0 ||
+    (nextEligibleYear !== null && Number(referenceYear) >= Number(nextEligibleYear)) ||
+    overdueByHistoricalWindow;
+
+  return {
+    previousIssuedYear,
+    nextIssuedYear,
+    nextEligibleYear,
+    windowCycleSpan,
+    overdueByHistoricalWindow,
+    dueByServiceLife,
+  };
 }
 
 function isYearWithinRange({ year, transferInYear, transferOutYear }) {
@@ -347,6 +458,55 @@ async function assertCategoryAvailable({ categoryId }) {
   }
 
   return category;
+}
+
+async function assertMilitaryTypeAvailable({ typeId, db = prisma }) {
+  const type = await db.militaryTypeCatalog.findFirst({
+    where: {
+      id: typeId,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+    },
+  });
+
+  if (!type) {
+    throwNotFound("Loại quân nhân không tồn tại hoặc đã bị xoá", "MILITARY_TYPE_NOT_FOUND");
+  }
+
+  return type;
+}
+
+async function fetchMilitaryTypeAssignments({ militaryId, db = prisma }) {
+  const assignments = await db.militaryTypeAssignment.findMany({
+    where: {
+      militaryId,
+      type: {
+        deletedAt: null,
+      },
+    },
+    orderBy: [{ typeId: "asc" }],
+    select: {
+      typeId: true,
+      type: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  return assignments
+    .map((entry) => ({
+      typeId: Number(entry.typeId),
+      type: entry.type,
+    }))
+    .filter((entry) => Number.isInteger(entry.typeId) && entry.type);
 }
 
 function parseQuantities(itemQuantities) {
@@ -660,8 +820,42 @@ async function assertAllocationStandardUnique({
   }
 }
 
+async function assertAllocationServiceLifeRuleUnique({
+  unitId,
+  typeId,
+  categoryId,
+  excludeRuleId = null,
+  db = prisma,
+}) {
+  const existed = await db.supplyAllocationServiceLifeRule.findFirst({
+    where: {
+      unitId,
+      typeId,
+      categoryId,
+      ...(excludeRuleId ? { id: { not: excludeRuleId } } : {}),
+    },
+    select: {
+      id: true,
+      deletedAt: true,
+    },
+  });
+
+  if (!existed) return null;
+
+  throwConflict(
+    existed.deletedAt
+      ? "Quy định niên hạn cho loại quân nhân và danh mục này đã tồn tại ở trạng thái đã xoá"
+      : "Quy định niên hạn cho loại quân nhân và danh mục này đã tồn tại",
+    "ALLOCATION_SERVICE_LIFE_RULE_DUPLICATE",
+  );
+}
+
 function buildStandardTupleLockKey({ unitId, subjectId, categoryId }) {
   return `allocation_standard:${Number(unitId)}:${Number(subjectId)}:${Number(categoryId)}`;
+}
+
+function buildServiceLifeRuleLockKey({ unitId, typeId, categoryId }) {
+  return `allocation_service_life:${Number(unitId)}:${Number(typeId)}:${Number(categoryId)}`;
 }
 
 async function withMySqlNamedLock({ db = prisma, key, task, timeoutSeconds = 5 }) {
@@ -825,6 +1019,131 @@ async function getActiveMembershipAtYear({
   });
 }
 
+async function resolveApplicableServiceLifeForCategory({
+  unitId,
+  militaryId,
+  categoryId,
+  fallbackServiceLifeYears,
+  requestedTypeId,
+  militaryRankGroup,
+  militaryGender,
+  militaryTypeAssignments = null,
+  db = prisma,
+}) {
+  const assignments =
+    militaryTypeAssignments || (await fetchMilitaryTypeAssignments({ militaryId, db }));
+  const assignedTypeIds = assignments
+    .map((entry) => Number(entry.typeId))
+    .filter((typeId) => Number.isInteger(typeId) && typeId > 0);
+
+  if (requestedTypeId !== undefined && requestedTypeId !== null) {
+    const parsedTypeId = Number.parseInt(requestedTypeId, 10);
+    if (!Number.isInteger(parsedTypeId) || parsedTypeId <= 0) {
+      throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+    }
+    if (!assignedTypeIds.includes(parsedTypeId)) {
+      throwBadRequest(
+        "Quân nhân không thuộc loại được yêu cầu",
+        "MILITARY_TYPE_NOT_ASSIGNED",
+      );
+    }
+  }
+
+  const candidateTypeIds = Number.isInteger(Number(requestedTypeId))
+    ? [Number(requestedTypeId)]
+    : assignedTypeIds;
+
+  if (!candidateTypeIds.length) {
+    return {
+      source: "STANDARD_DEFAULT",
+      serviceLifeYears: Number(fallbackServiceLifeYears || 0),
+      appliedType: null,
+      rule: null,
+      militaryTypes: assignments.map((entry) => mapMilitaryType(entry.type)),
+    };
+  }
+
+  const rules = await db.supplyAllocationServiceLifeRule.findMany({
+    where: {
+      unitId,
+      categoryId,
+      deletedAt: null,
+      typeId: {
+        in: candidateTypeIds,
+      },
+    },
+    orderBy: [{ typeId: "asc" }, { id: "asc" }],
+    include: {
+      type: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  if (!rules.length) {
+    return {
+      source: "STANDARD_DEFAULT",
+      serviceLifeYears: Number(fallbackServiceLifeYears || 0),
+      appliedType: null,
+      rule: null,
+      militaryTypes: assignments.map((entry) => mapMilitaryType(entry.type)),
+    };
+  }
+
+  const matchedRules = rules.filter((rule) =>
+    isRuleMatched({
+      rule: {
+        mode: ALLOCATION_RULE_MODE.CONDITIONAL,
+        gender: String(rule.gender || "ANY"),
+        rankGroup: String(rule.rankGroup || "ANY"),
+      },
+      rankGroup: militaryRankGroup,
+      gender: militaryGender,
+    }),
+  );
+
+  if (!matchedRules.length) {
+    return {
+      source: "TYPE_RULE_BLOCKED",
+      serviceLifeYears: null,
+      appliedType: null,
+      rule: null,
+      militaryTypes: assignments.map((entry) => mapMilitaryType(entry.type)),
+    };
+  }
+
+  if (matchedRules.length > 1 && !Number.isInteger(Number(requestedTypeId))) {
+    throwConflict(
+      "Quân nhân có nhiều loại cùng khớp niên hạn cho danh mục này, vui lòng chỉ định typeId",
+      "ALLOCATION_SERVICE_LIFE_RULE_AMBIGUOUS",
+      {
+        militaryId,
+        categoryId,
+        typeIds: matchedRules.map((rule) => rule.typeId),
+      },
+    );
+  }
+
+  const appliedRule = matchedRules[0];
+  return {
+    source: "TYPE_RULE",
+    serviceLifeYears: Number(appliedRule.serviceLifeYears || 0),
+    appliedType: mapMilitaryType(appliedRule.type),
+    rule: {
+      id: appliedRule.id,
+      typeId: appliedRule.typeId,
+      categoryId,
+      gender: String(appliedRule.gender || "ANY"),
+      rankGroup: String(appliedRule.rankGroup || "ANY"),
+    },
+    militaryTypes: assignments.map((entry) => mapMilitaryType(entry.type)),
+  };
+}
+
 function mapIssueVoucher(voucher) {
   return {
     id: voucher.id,
@@ -878,6 +1197,13 @@ function mapIssueVoucher(voucher) {
       unitOfMeasureName: entry.unitOfMeasureName,
       categoryName: entry.categoryName,
       serviceLifeYears: entry.serviceLifeYears,
+      appliedType: entry.appliedTypeId
+        ? {
+            id: entry.appliedTypeId,
+            code: entry.appliedTypeCode || null,
+            name: entry.appliedTypeName || null,
+          }
+        : null,
     })),
   };
 }
@@ -1197,6 +1523,13 @@ export async function setAllocationSubjectMemberships({ actor, body } = {}) {
   if (!militaryId) {
     throwBadRequest("militaryId là bắt buộc", "MILITARY_ID_REQUIRED");
   }
+  const requestedTypeId =
+    body?.typeId === undefined || body?.typeId === null || body?.typeId === ""
+      ? null
+      : Number.parseInt(body.typeId, 10);
+  if (requestedTypeId !== null && (!Number.isInteger(requestedTypeId) || requestedTypeId <= 0)) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+  }
 
   const military = await prisma.military.findFirst({
     where: { id: militaryId, deletedAt: null },
@@ -1280,12 +1613,6 @@ export async function setAllocationSubjectMemberships({ actor, body } = {}) {
     }
   });
 
-  const variantIdByItemId = new Map(
-    await Promise.all(
-      issueItems.map(async (entry) => [entry.itemId, await resolveItemVariantId({ itemId: entry.itemId })]),
-    ),
-  );
-
   await prisma.$transaction(async (tx) => {
     await tx.militaryAllocationSubjectMembership.deleteMany({
       where: {
@@ -1312,6 +1639,559 @@ export async function setAllocationSubjectMemberships({ actor, body } = {}) {
   return listAllocationSubjectMemberships({
     actor,
     militaryId,
+    unitId: scopedUnitId,
+  });
+}
+
+export async function listAllocationServiceLifeRules({
+  actor,
+  typeId,
+  categoryId,
+  page,
+  limit,
+  status = "active",
+  unitId,
+}) {
+  const scopedUnitId = resolveScopeUnitForRead({ actor, unitId });
+  const currentPage = parsePositiveInt(page, 1);
+  const pageSize = Math.min(parsePositiveInt(limit, 20), 100);
+
+  const where = {
+    unitId: scopedUnitId,
+  };
+  if (status === "active") where.deletedAt = null;
+  if (status === "deleted") where.deletedAt = { not: null };
+
+  if (typeId !== undefined) {
+    const parsedTypeId = Number.parseInt(typeId, 10);
+    if (!Number.isInteger(parsedTypeId) || parsedTypeId <= 0) {
+      throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+    }
+    where.typeId = parsedTypeId;
+  }
+
+  if (categoryId !== undefined) {
+    const parsedCategoryId = Number.parseInt(categoryId, 10);
+    if (!Number.isInteger(parsedCategoryId) || parsedCategoryId <= 0) {
+      throwBadRequest("categoryId không hợp lệ", "INVALID_CATEGORY_ID");
+    }
+    where.categoryId = parsedCategoryId;
+  }
+
+  const [total, rules] = await Promise.all([
+    prisma.supplyAllocationServiceLifeRule.count({ where }),
+    prisma.supplyAllocationServiceLifeRule.findMany({
+      where,
+      skip: (currentPage - 1) * pageSize,
+      take: pageSize,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      include: {
+        unit: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        type: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
+        category: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  return {
+    unitId: scopedUnitId,
+    rules: rules.map(mapServiceLifeRule),
+    pagination: {
+      page: currentPage,
+      limit: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize) || 1,
+    },
+  };
+}
+
+export async function createAllocationServiceLifeRule({ actor, body }) {
+  const scopedUnitId = resolveScopeUnitForWrite({ actor, unitId: body?.unitId });
+  const typeId = Number.parseInt(body?.typeId, 10);
+  const categoryId = Number.parseInt(body?.categoryId, 10);
+  const serviceLifeYears = parseServiceLifeYears(body?.serviceLifeYears);
+  const gender = parseAllocationRuleGender(body?.gender);
+  const rankGroup = parseAllocationRankGroup(body?.rankGroup);
+
+  if (!Number.isInteger(typeId) || typeId <= 0) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+  }
+  if (!Number.isInteger(categoryId) || categoryId <= 0) {
+    throwBadRequest("categoryId không hợp lệ", "INVALID_CATEGORY_ID");
+  }
+
+  const rule = await withMySqlNamedLock({
+    key: buildServiceLifeRuleLockKey({
+      unitId: scopedUnitId,
+      typeId,
+      categoryId,
+    }),
+    task: async () => {
+      await Promise.all([
+        assertMilitaryTypeAvailable({ typeId }),
+        assertCategoryAvailable({ categoryId }),
+      ]);
+
+      const existed = await prisma.supplyAllocationServiceLifeRule.findFirst({
+        where: {
+          unitId: scopedUnitId,
+          typeId,
+          categoryId,
+        },
+        include: {
+          unit: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (existed?.deletedAt) {
+        return prisma.supplyAllocationServiceLifeRule.update({
+          where: {
+            id: existed.id,
+          },
+          data: {
+            serviceLifeYears,
+            gender,
+            rankGroup,
+            deletedAt: null,
+          },
+          include: {
+            unit: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            type: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+              },
+            },
+            category: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+      }
+
+      await assertAllocationServiceLifeRuleUnique({
+        unitId: scopedUnitId,
+        typeId,
+        categoryId,
+      });
+
+      return prisma.supplyAllocationServiceLifeRule.create({
+        data: {
+          unitId: scopedUnitId,
+          typeId,
+          categoryId,
+          serviceLifeYears,
+          gender,
+          rankGroup,
+        },
+        include: {
+          unit: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  return {
+    rule: mapServiceLifeRule(rule),
+  };
+}
+
+export async function updateAllocationServiceLifeRule({ actor, ruleId, body }) {
+  const id = Number.parseInt(ruleId, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throwBadRequest("ruleId không hợp lệ", "INVALID_ALLOCATION_SERVICE_LIFE_RULE_ID");
+  }
+
+  const current = await prisma.supplyAllocationServiceLifeRule.findFirst({
+    where: {
+      id,
+    },
+  });
+
+  if (!current) {
+    throwNotFound("Quy định niên hạn không tồn tại", "ALLOCATION_SERVICE_LIFE_RULE_NOT_FOUND");
+  }
+
+  const scopedUnitId = resolveScopeUnitForWrite({
+    actor,
+    unitId: body?.unitId ?? current.unitId,
+  });
+
+  if (Number(current.unitId) !== Number(scopedUnitId)) {
+    throwForbidden(
+      "Bạn không có quyền cập nhật quy định niên hạn của đơn vị khác",
+      "ALLOCATION_SERVICE_LIFE_RULE_SCOPE_FORBIDDEN",
+    );
+  }
+
+  const nextTypeId =
+    body?.typeId !== undefined ? Number.parseInt(body.typeId, 10) : Number(current.typeId);
+  const nextCategoryId =
+    body?.categoryId !== undefined
+      ? Number.parseInt(body.categoryId, 10)
+      : Number(current.categoryId);
+
+  if (!Number.isInteger(nextTypeId) || nextTypeId <= 0) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+  }
+  if (!Number.isInteger(nextCategoryId) || nextCategoryId <= 0) {
+    throwBadRequest("categoryId không hợp lệ", "INVALID_CATEGORY_ID");
+  }
+
+  const patch = {};
+  if (body?.typeId !== undefined) patch.typeId = nextTypeId;
+  if (body?.categoryId !== undefined) patch.categoryId = nextCategoryId;
+  if (body?.serviceLifeYears !== undefined) {
+    patch.serviceLifeYears = parseServiceLifeYears(body.serviceLifeYears);
+  }
+  if (body?.gender !== undefined) {
+    patch.gender = parseAllocationRuleGender(body.gender);
+  }
+  if (body?.rankGroup !== undefined) {
+    patch.rankGroup = parseAllocationRankGroup(body.rankGroup);
+  }
+
+  const rule = await withMySqlNamedLock({
+    key: buildServiceLifeRuleLockKey({
+      unitId: scopedUnitId,
+      typeId: nextTypeId,
+      categoryId: nextCategoryId,
+    }),
+    task: async () => {
+      await Promise.all([
+        assertMilitaryTypeAvailable({ typeId: nextTypeId }),
+        assertCategoryAvailable({ categoryId: nextCategoryId }),
+        assertAllocationServiceLifeRuleUnique({
+          unitId: scopedUnitId,
+          typeId: nextTypeId,
+          categoryId: nextCategoryId,
+          excludeRuleId: id,
+        }),
+      ]);
+
+      return prisma.supplyAllocationServiceLifeRule.update({
+        where: {
+          id,
+        },
+        data: patch,
+        include: {
+          unit: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+          category: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+    },
+  });
+
+  return {
+    rule: mapServiceLifeRule(rule),
+  };
+}
+
+export async function deleteAllocationServiceLifeRule({ actor, ruleId, unitId }) {
+  const scopedUnitId = resolveScopeUnitForWrite({ actor, unitId });
+  const id = Number.parseInt(ruleId, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    throwBadRequest("ruleId không hợp lệ", "INVALID_ALLOCATION_SERVICE_LIFE_RULE_ID");
+  }
+
+  const rule = await prisma.supplyAllocationServiceLifeRule.findFirst({
+    where: {
+      id,
+    },
+    select: {
+      id: true,
+      unitId: true,
+      deletedAt: true,
+    },
+  });
+
+  if (!rule) {
+    throwNotFound("Quy định niên hạn không tồn tại", "ALLOCATION_SERVICE_LIFE_RULE_NOT_FOUND");
+  }
+
+  if (Number(rule.unitId) !== Number(scopedUnitId)) {
+    throwForbidden(
+      "Bạn không có quyền xoá quy định niên hạn của đơn vị khác",
+      "ALLOCATION_SERVICE_LIFE_RULE_SCOPE_FORBIDDEN",
+    );
+  }
+
+  if (rule.deletedAt) return { id };
+
+  await prisma.supplyAllocationServiceLifeRule.update({
+    where: {
+      id,
+    },
+    data: {
+      deletedAt: new Date(),
+    },
+  });
+
+  return { id };
+}
+
+export async function getAllocationServiceLifeEditor({ actor, typeId, unitId }) {
+  const scopedUnitId = resolveScopeUnitForRead({ actor, unitId });
+  const parsedTypeId = Number.parseInt(typeId, 10);
+  if (!Number.isInteger(parsedTypeId) || parsedTypeId <= 0) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+  }
+
+  const [type, categories, rules] = await Promise.all([
+    assertMilitaryTypeAvailable({ typeId: parsedTypeId }),
+    prisma.category.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+      },
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        unitOfMeasure: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    }),
+    prisma.supplyAllocationServiceLifeRule.findMany({
+      where: {
+        unitId: scopedUnitId,
+        typeId: parsedTypeId,
+        deletedAt: null,
+      },
+      orderBy: [{ category: { name: "asc" } }, { id: "asc" }],
+      include: {
+        category: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            unitOfMeasure: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        type: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const ruleByCategoryId = new Map(rules.map((rule) => [Number(rule.categoryId), rule]));
+
+  return {
+    unitId: scopedUnitId,
+    type: mapMilitaryType(type),
+    availableCategories: categories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      code: category.code || null,
+      unitOfMeasure: category.unitOfMeasure
+        ? {
+            id: category.unitOfMeasure.id,
+            name: category.unitOfMeasure.name,
+          }
+        : null,
+      selected: ruleByCategoryId.has(Number(category.id)),
+    })),
+    selectedRules: rules.map(mapServiceLifeRule),
+  };
+}
+
+export async function saveAllocationServiceLifeEditor({ actor, body }) {
+  const scopedUnitId = resolveScopeUnitForWrite({ actor, unitId: body?.unitId });
+  const typeId = Number.parseInt(body?.typeId, 10);
+  if (!Number.isInteger(typeId) || typeId <= 0) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
+  }
+
+  const assignmentsRaw = Array.isArray(body?.assignments) ? body.assignments : [];
+  const assignments = assignmentsRaw.map((entry, index) => {
+    const categoryId = Number.parseInt(entry?.categoryId, 10);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      throwBadRequest(
+        `categoryId không hợp lệ tại assignments[${index}]`,
+        "INVALID_CATEGORY_ID",
+      );
+    }
+    return {
+      categoryId,
+      serviceLifeYears: parseServiceLifeYears(entry?.serviceLifeYears),
+      gender: parseAllocationRuleGender(entry?.gender),
+      rankGroup: parseAllocationRankGroup(entry?.rankGroup),
+    };
+  });
+
+  const dedupeCategoryIds = new Set();
+  assignments.forEach((entry) => {
+    if (dedupeCategoryIds.has(entry.categoryId)) {
+      throwBadRequest(
+        "Không được chọn trùng categoryId trong cùng một lần lưu",
+        "DUPLICATED_SERVICE_LIFE_CATEGORY",
+      );
+    }
+    dedupeCategoryIds.add(entry.categoryId);
+  });
+
+  await assertMilitaryTypeAvailable({ typeId });
+  await Promise.all(assignments.map((entry) => assertCategoryAvailable({ categoryId: entry.categoryId })));
+
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.supplyAllocationServiceLifeRule.findMany({
+      where: {
+        unitId: scopedUnitId,
+        typeId,
+      },
+      select: {
+        id: true,
+        categoryId: true,
+        deletedAt: true,
+      },
+    });
+
+    const existingByCategoryId = new Map(existing.map((row) => [Number(row.categoryId), row]));
+    const selectedCategoryIds = new Set(assignments.map((entry) => entry.categoryId));
+
+    const deactivatedIds = existing
+      .filter((row) => !row.deletedAt && !selectedCategoryIds.has(Number(row.categoryId)))
+      .map((row) => row.id);
+
+    if (deactivatedIds.length) {
+      await tx.supplyAllocationServiceLifeRule.updateMany({
+        where: {
+          id: {
+            in: deactivatedIds,
+          },
+        },
+        data: {
+          deletedAt: new Date(),
+        },
+      });
+    }
+
+    for (const entry of assignments) {
+      const existed = existingByCategoryId.get(entry.categoryId);
+      if (existed) {
+        await tx.supplyAllocationServiceLifeRule.update({
+          where: {
+            id: existed.id,
+          },
+          data: {
+            serviceLifeYears: entry.serviceLifeYears,
+            gender: entry.gender,
+            rankGroup: entry.rankGroup,
+            deletedAt: null,
+          },
+        });
+        continue;
+      }
+
+      await tx.supplyAllocationServiceLifeRule.create({
+        data: {
+          unitId: scopedUnitId,
+          typeId,
+          categoryId: entry.categoryId,
+          serviceLifeYears: entry.serviceLifeYears,
+          gender: entry.gender,
+          rankGroup: entry.rankGroup,
+        },
+      });
+    }
+  });
+
+  return getAllocationServiceLifeEditor({
+    actor,
+    typeId,
     unitId: scopedUnitId,
   });
 }
@@ -1869,6 +2749,7 @@ export async function getAllocationEligibleItems({
   subjectId,
   militaryId,
   categoryId,
+  typeId,
   asOfDate,
   asOfYear,
   gender,
@@ -1886,6 +2767,13 @@ export async function getAllocationEligibleItems({
     (!Number.isInteger(parsedCategoryId) || parsedCategoryId <= 0)
   ) {
     throwBadRequest("categoryId không hợp lệ", "INVALID_CATEGORY_ID");
+  }
+  const requestedTypeId =
+    typeId === undefined || typeId === null || typeId === ""
+      ? null
+      : Number.parseInt(typeId, 10);
+  if (requestedTypeId !== null && (!Number.isInteger(requestedTypeId) || requestedTypeId <= 0)) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
   }
 
   const effectiveAsOfYear = parseAsOfYear({ asOfYear, asOfDate });
@@ -1906,10 +2794,35 @@ export async function getAllocationEligibleItems({
           code: true,
         },
       },
+      typeAssignments: {
+        where: {
+          type: {
+            deletedAt: null,
+          },
+        },
+        orderBy: [{ typeId: "asc" }],
+        select: {
+          typeId: true,
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+        },
+      },
     },
   });
   if (!military) {
     throwNotFound("Quân nhân không tồn tại", "MILITARY_NOT_FOUND");
+  }
+
+  if (
+    requestedTypeId !== null &&
+    !(military.typeAssignments || []).some((entry) => Number(entry.typeId) === Number(requestedTypeId))
+  ) {
+    throwBadRequest("Quân nhân không thuộc loại được yêu cầu", "MILITARY_TYPE_NOT_ASSIGNED");
   }
 
   const scopeUnitId = resolveScopeUnitForRead({ actor, unitId });
@@ -1986,10 +2899,12 @@ export async function getAllocationEligibleItems({
         SELECT standardId, MAX(issuedAt) AS lastIssuedAt
         FROM supply_allocation_issue_logs
         WHERE militaryId = ?
+          AND issuedYear <= ?
           AND standardId IN (${standardIds.map(() => "?").join(", ")})
         GROUP BY standardId
       `,
         military.id,
+        effectiveAsOfYear,
         ...standardIds,
       )
     : [];
@@ -1999,8 +2914,38 @@ export async function getAllocationEligibleItems({
         SELECT standardId, itemId, MAX(issuedAt) AS lastIssuedAt
         FROM supply_allocation_issue_logs
         WHERE militaryId = ?
+          AND issuedYear <= ?
           AND standardId IN (${standardIds.map(() => "?").join(", ")})
         GROUP BY standardId, itemId
+      `,
+        military.id,
+        effectiveAsOfYear,
+        ...standardIds,
+      )
+    : [];
+  const standardIssueYearRows = standardIds.length
+    ? await prisma.$queryRawUnsafe(
+        `
+        SELECT standardId, issuedYear
+        FROM supply_allocation_issue_logs
+        WHERE militaryId = ?
+          AND standardId IN (${standardIds.map(() => "?").join(", ")})
+        GROUP BY standardId, issuedYear
+        ORDER BY issuedYear ASC
+      `,
+        military.id,
+        ...standardIds,
+      )
+    : [];
+  const itemIssueYearRows = standardIds.length
+    ? await prisma.$queryRawUnsafe(
+        `
+        SELECT standardId, itemId, issuedYear
+        FROM supply_allocation_issue_logs
+        WHERE militaryId = ?
+          AND standardId IN (${standardIds.map(() => "?").join(", ")})
+        GROUP BY standardId, itemId, issuedYear
+        ORDER BY issuedYear ASC
       `,
         military.id,
         ...standardIds,
@@ -2029,11 +2974,23 @@ export async function getAllocationEligibleItems({
     if (!row.lastIssuedAt) return;
     standardLastIssueMap.set(standardId, new Date(row.lastIssuedAt));
   });
+  const standardIssueYearMap = standardIssueYearRows.reduce((map, row) => {
+    const standardId = Number(row.standardId);
+    if (!map.has(standardId)) map.set(standardId, []);
+    map.get(standardId).push(Number(row.issuedYear));
+    return map;
+  }, new Map());
   issueRows.forEach((row) => {
     const key = `${Number(row.standardId)}:${Number(row.itemId)}`;
     if (!row.lastIssuedAt) return;
     lastIssueMap.set(key, new Date(row.lastIssuedAt));
   });
+  const itemIssueYearMap = itemIssueYearRows.reduce((map, row) => {
+    const key = `${Number(row.standardId)}:${Number(row.itemId)}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(Number(row.issuedYear));
+    return map;
+  }, new Map());
   const issuedInYearMap = new Map();
   issuedInYearRows.forEach((row) => {
     const key = `${Number(row.standardId)}:${Number(row.itemId)}`;
@@ -2042,8 +2999,10 @@ export async function getAllocationEligibleItems({
 
   const militaryRank = String(military.rank || "");
   const militaryRankGroup = String(military.rankGroup || resolveRankGroup(militaryRank));
-  const eligibleStandards = standards
-    .map((standard) => {
+  const militaryTypes = (military.typeAssignments || []).map((entry) => mapMilitaryType(entry.type));
+  const resolvedStandards = (
+    await Promise.all(
+      standards.map(async (standard) => {
       const campaignData = campaignContentMap.get(standard.id) || null;
       const standardCondition = campaignData?.standardCondition || null;
       const matchedStandardCondition = isStandardConditionMatched({
@@ -2053,16 +3012,29 @@ export async function getAllocationEligibleItems({
       });
       if (!matchedStandardCondition) return null;
 
+      const serviceLifeData = await resolveApplicableServiceLifeForCategory({
+        unitId: scopeUnitId,
+        militaryId: military.id,
+        categoryId: standard.category?.id || standard.categoryId,
+        fallbackServiceLifeYears: standard.serviceLifeYears,
+        requestedTypeId,
+        militaryRankGroup,
+        militaryGender: normalizedGender,
+        militaryTypeAssignments: (military.typeAssignments || []).map((entry) => ({
+          typeId: entry.typeId,
+          type: entry.type,
+        })),
+      });
+      if (serviceLifeData.source === "TYPE_RULE_BLOCKED") return null;
+      const standardTimeline = resolveServiceLifeTimeline({
+        issueYears: standardIssueYearMap.get(Number(standard.id)) || [],
+        referenceYear: effectiveAsOfYear,
+        serviceLifeYears: Number(serviceLifeData.serviceLifeYears || 0),
+      });
+      const standardLastIssuedYear = standardTimeline.previousIssuedYear;
       const standardLastIssuedAt = standardLastIssueMap.get(standard.id) || null;
-      const standardLastIssuedYear = standardLastIssuedAt
-        ? getYearFromDate(standardLastIssuedAt)
-        : null;
-      const standardNextEligibleYear =
-        standardLastIssuedYear !== null
-          ? standardLastIssuedYear + Number(standard.serviceLifeYears || 0)
-          : null;
-      const dueByCategoryCycle =
-        standardNextEligibleYear === null || standardNextEligibleYear <= effectiveAsOfYear;
+      const standardNextEligibleYear = standardTimeline.nextEligibleYear;
+      const dueByCategoryCycle = standardTimeline.dueByServiceLife;
       if (!dueByCategoryCycle) return null;
 
       const itemRuleMap = ruleMapByStandardId.get(standard.id) || new Map();
@@ -2082,7 +3054,12 @@ export async function getAllocationEligibleItems({
 
           const key = `${standard.id}:${entry.itemId}`;
           const itemLastIssuedAt = lastIssueMap.get(key) || null;
-          const itemLastIssuedYear = itemLastIssuedAt ? getYearFromDate(itemLastIssuedAt) : null;
+          const itemTimeline = resolveServiceLifeTimeline({
+            issueYears: itemIssueYearMap.get(key) || [],
+            referenceYear: effectiveAsOfYear,
+            serviceLifeYears: Number(serviceLifeData.serviceLifeYears || 0),
+          });
+          const itemLastIssuedYear = itemTimeline.previousIssuedYear;
           const annualQuota = Number(entry.quantity || 0);
           const issuedQuantityInYear = Number(issuedInYearMap.get(key) || 0);
           const remainingQuantityInYear = Math.max(annualQuota - issuedQuantityInYear, 0);
@@ -2124,7 +3101,10 @@ export async function getAllocationEligibleItems({
 
       return {
         standardId: standard.id,
-        serviceLifeYears: standard.serviceLifeYears,
+        serviceLifeYears: Number(serviceLifeData.serviceLifeYears || 0),
+        defaultServiceLifeYears: Number(standard.serviceLifeYears || 0),
+        serviceLifeSource: serviceLifeData.source,
+        appliedType: serviceLifeData.appliedType,
         campaignContent: String(campaignData?.content || "").trim() || null,
         standardCondition,
         lastIssuedAt: standardLastIssuedAt ? standardLastIssuedAt.toISOString() : null,
@@ -2138,10 +3118,11 @@ export async function getAllocationEligibleItems({
           : null,
         items: eligibleItems,
       };
-    })
-    .filter(Boolean);
+      }),
+    )
+  ).filter(Boolean);
 
-  const totalEligibleItems = eligibleStandards.reduce(
+  const totalEligibleItems = resolvedStandards.reduce(
     (acc, standard) => acc + (standard.items?.length || 0),
     0,
   );
@@ -2157,10 +3138,12 @@ export async function getAllocationEligibleItems({
       rankCode: militaryRank,
       rankGroup: militaryRankGroup,
       gender: normalizedGender,
+      types: militaryTypes,
     },
-    standards: eligibleStandards,
+    requestedTypeId,
+    standards: resolvedStandards,
     summary: {
-      totalCategories: eligibleStandards.length,
+      totalCategories: resolvedStandards.length,
       totalEligibleItems,
     },
   };
@@ -2225,6 +3208,9 @@ export async function listAllocationIssueVouchers({
             id: true,
             standardId: true,
             itemId: true,
+            appliedTypeId: true,
+            appliedTypeCode: true,
+            appliedTypeName: true,
             quantity: true,
             itemName: true,
             itemCode: true,
@@ -2240,6 +3226,259 @@ export async function listAllocationIssueVouchers({
   return {
     unitId: scopedUnitId,
     vouchers: vouchers.map(mapIssueVoucher),
+    pagination: {
+      page: currentPage,
+      limit: pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize) || 1,
+    },
+  };
+}
+
+export async function listAllocationIssueHistory({
+  actor,
+  militaryId,
+  categoryId,
+  itemId,
+  yearFrom,
+  yearTo,
+  page,
+  limit,
+  unitId,
+}) {
+  const scopedUnitId = resolveScopeUnitForRead({ actor, unitId });
+  const normalizedMilitaryId = String(militaryId || "").trim();
+  if (!normalizedMilitaryId) {
+    throwBadRequest("militaryId là bắt buộc", "MILITARY_ID_REQUIRED");
+  }
+
+  const military = await prisma.military.findFirst({
+    where: {
+      id: normalizedMilitaryId,
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      unitId: true,
+      fullname: true,
+      militaryCode: true,
+      rank: true,
+      gender: true,
+      genderCatalog: {
+        select: {
+          code: true,
+        },
+      },
+      typeAssignments: {
+        where: {
+          type: {
+            deletedAt: null,
+          },
+        },
+        orderBy: [{ typeId: "asc" }],
+        select: {
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!military) {
+    throwNotFound("Quân nhân không tồn tại", "MILITARY_NOT_FOUND");
+  }
+
+  if (Number(military.unitId) !== Number(scopedUnitId)) {
+    throwForbidden(
+      "Bạn chỉ được xem lịch sử cấp phát của quân nhân thuộc đơn vị mình",
+      "MILITARY_SCOPE_FORBIDDEN",
+    );
+  }
+
+  const parsedCategoryId =
+    categoryId === undefined ? null : Number.parseInt(categoryId, 10);
+  if (parsedCategoryId !== null && (!Number.isInteger(parsedCategoryId) || parsedCategoryId <= 0)) {
+    throwBadRequest("categoryId không hợp lệ", "INVALID_CATEGORY_ID");
+  }
+
+  const parsedItemId = itemId === undefined ? null : Number.parseInt(itemId, 10);
+  if (parsedItemId !== null && (!Number.isInteger(parsedItemId) || parsedItemId <= 0)) {
+    throwBadRequest("itemId không hợp lệ", "INVALID_ITEM_ID");
+  }
+
+  const parsedYearFrom = yearFrom === undefined ? null : parseYearLike(yearFrom);
+  const parsedYearTo = yearTo === undefined ? null : parseYearLike(yearTo);
+  if (parsedYearFrom !== null && parsedYearTo !== null && parsedYearTo < parsedYearFrom) {
+    throwBadRequest("yearTo phải lớn hơn hoặc bằng yearFrom", "INVALID_YEAR_RANGE");
+  }
+
+  const currentPage = parsePositiveInt(page, 1);
+  const pageSize = Math.min(parsePositiveInt(limit, 20), 100);
+
+  const where = {
+    voucher: {
+      unitId: scopedUnitId,
+      militaryId: normalizedMilitaryId,
+      ...(parsedYearFrom !== null || parsedYearTo !== null
+        ? {
+            issuedYear: {
+              ...(parsedYearFrom !== null ? { gte: parsedYearFrom } : {}),
+              ...(parsedYearTo !== null ? { lte: parsedYearTo } : {}),
+            },
+          }
+        : {}),
+    },
+    ...(parsedItemId !== null ? { itemId: parsedItemId } : {}),
+    ...(parsedCategoryId !== null
+      ? {
+          standardItem: {
+            standard: {
+              categoryId: parsedCategoryId,
+            },
+          },
+        }
+      : {}),
+  };
+
+  const [total, aggregate, entries] = await Promise.all([
+    prisma.supplyAllocationIssueVoucherItem.count({ where }),
+    prisma.supplyAllocationIssueVoucherItem.aggregate({
+      where,
+      _sum: {
+        quantity: true,
+      },
+    }),
+    prisma.supplyAllocationIssueVoucherItem.findMany({
+      where,
+      skip: (currentPage - 1) * pageSize,
+      take: pageSize,
+      orderBy: [
+        {
+          voucher: {
+            issuedAt: "desc",
+          },
+        },
+        { createdAt: "desc" },
+      ],
+      include: {
+        voucher: {
+          select: {
+            id: true,
+            voucherNo: true,
+            issuedAt: true,
+            issuedYear: true,
+            note: true,
+            warehouse: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+            subject: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+        standardItem: {
+          select: {
+            standardId: true,
+            itemId: true,
+            item: {
+              select: {
+                id: true,
+                code: true,
+              },
+            },
+            standard: {
+              select: {
+                categoryId: true,
+                category: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+        appliedType: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  return {
+    unitId: scopedUnitId,
+    military: {
+      id: military.id,
+      fullname: military.fullname,
+      militaryCode: military.militaryCode,
+      rank: getMilitaryRankLabel(military.rank),
+      rankCode: military.rank,
+      gender: military.genderCatalog?.code || military.gender || null,
+      types: (military.typeAssignments || []).map((entry) => mapMilitaryType(entry.type)),
+    },
+    histories: entries.map((entry) => ({
+      id: entry.id,
+      voucherId: entry.voucherId,
+      voucherNo: entry.voucher?.voucherNo || null,
+      standardId: entry.standardId,
+      itemId: entry.itemId,
+      quantity: entry.quantity,
+      issuedAt: entry.voucher?.issuedAt ? entry.voucher.issuedAt.toISOString() : null,
+      issuedYear: entry.voucher?.issuedYear ?? null,
+      note: entry.voucher?.note || null,
+      subject: entry.voucher?.subject
+        ? {
+            id: entry.voucher.subject.id,
+            name: entry.voucher.subject.name,
+          }
+        : null,
+      warehouse: entry.voucher?.warehouse
+        ? {
+            id: entry.voucher.warehouse.id,
+            name: entry.voucher.warehouse.name,
+          }
+        : null,
+      category: {
+        id: entry.standardItem?.standard?.category?.id || entry.standardItem?.standard?.categoryId,
+        name: entry.categoryName || entry.standardItem?.standard?.category?.name || null,
+      },
+      item: {
+        id: entry.standardItem?.item?.id || entry.itemId,
+        name: entry.itemName,
+        code: entry.itemCode || entry.standardItem?.item?.code || null,
+        unitOfMeasureName: entry.unitOfMeasureName || null,
+      },
+      serviceLifeYears: entry.serviceLifeYears,
+      appliedType: entry.appliedType
+        ? mapMilitaryType(entry.appliedType)
+        : entry.appliedTypeId
+          ? {
+              id: entry.appliedTypeId,
+              code: entry.appliedTypeCode || null,
+              name: entry.appliedTypeName || null,
+            }
+          : null,
+    })),
+    summary: {
+      totalRecords: total,
+      totalQuantity: Number(aggregate._sum.quantity || 0),
+    },
     pagination: {
       page: currentPage,
       limit: pageSize,
@@ -2302,6 +3541,14 @@ export async function createAllocationIssueLog({ actor, body }) {
   const standardId = Number.parseInt(body?.standardId, 10);
   if (!Number.isInteger(standardId) || standardId <= 0) {
     throwBadRequest("standardId không hợp lệ", "INVALID_ALLOCATION_STANDARD_ID");
+  }
+
+  const requestedTypeId =
+    body?.typeId === undefined || body?.typeId === null || body?.typeId === ""
+      ? null
+      : Number.parseInt(body.typeId, 10);
+  if (requestedTypeId !== null && (!Number.isInteger(requestedTypeId) || requestedTypeId <= 0)) {
+    throwBadRequest("typeId không hợp lệ", "INVALID_MILITARY_TYPE_ID");
   }
 
   const warehouseId = Number.parseInt(body?.warehouseId, 10);
@@ -2416,6 +3663,7 @@ export async function createAllocationIssueLog({ actor, body }) {
     subjectId: standard.subjectId,
     militaryId,
     categoryId: standard.categoryId,
+    typeId: requestedTypeId,
     asOfYear: issuedYear,
     unitId: actorScopeUnitId,
   });
@@ -2456,6 +3704,17 @@ export async function createAllocationIssueLog({ actor, body }) {
       );
     }
   });
+
+  const effectiveServiceLifeYears = Number(eligibleStandard.serviceLifeYears || 0);
+  const appliedType = eligibleStandard.appliedType || null;
+  const variantIdByItemId = new Map(
+    await Promise.all(
+      issueItems.map(async (entry) => [
+        entry.itemId,
+        await resolveItemVariantId({ itemId: entry.itemId }),
+      ]),
+    ),
+  );
 
   const createdById = actor?.id || null;
   const voucherId = randomUUID();
@@ -2553,6 +3812,7 @@ export async function createAllocationIssueLog({ actor, body }) {
         itemId: entry.itemId,
         warehouseId,
         voucherId,
+        appliedTypeId: appliedType?.id || null,
         quantity: entry.quantity,
         issuedAt,
         issuedYear,
@@ -2569,12 +3829,15 @@ export async function createAllocationIssueLog({ actor, body }) {
           voucherId,
           standardId,
           itemId: entry.itemId,
+          appliedTypeId: appliedType?.id || null,
+          appliedTypeCode: appliedType?.code || null,
+          appliedTypeName: appliedType?.name || null,
           quantity: entry.quantity,
           itemName: standardItem?.item?.name || "",
           itemCode: standardItem?.item?.code || null,
           unitOfMeasureName: standardItem?.item?.unitOfMeasure?.name || null,
           categoryName: standardItem?.standard?.category?.name || null,
-          serviceLifeYears: Number(standardItem?.standard?.serviceLifeYears || 0),
+          serviceLifeYears: effectiveServiceLifeYears,
         };
       }),
     });
@@ -2636,6 +3899,7 @@ export async function createAllocationIssueLog({ actor, body }) {
     militaryId,
     standardId,
     warehouseId,
+    appliedType,
     issuedAt: issuedAt.toISOString(),
     issuedYear,
     itemCount: issueItems.length,

@@ -4,7 +4,6 @@ import { prisma } from "#configs/prisma.config.js";
 import { HTTP_CODES } from "#src/constants.js";
 import { AppError } from "#utils/AppError.js";
 import {
-  loadXlsxLibrary,
   parseMultipartFormData,
 } from "#services/militaries/common.js";
 import {
@@ -13,6 +12,14 @@ import {
   throwBadRequest,
 } from "#services/inventory/common.js";
 import { buildAutoItemCode } from "#services/inventory/item-code.service.js";
+import {
+  appendWorksheetFromRows,
+  applyListValidationRules,
+  createWorkbook,
+  readWorkbookFromBuffer,
+  worksheetToRowArrays,
+  writeWorkbookToBuffer,
+} from "#services/spreadsheet/excel.util.js";
 
 const ITEM_TEMPLATE_FILE_PREFIX = "inventory-items-template";
 const ITEM_TEMPLATE_SHEET_NAME = "MatHangQuanTrang";
@@ -30,66 +37,9 @@ function parseHeaderSignature(headers) {
     .digest("hex");
 }
 
-function escapeXml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function buildDataValidationXml(rules = []) {
-  const validRules = rules.filter((rule) => rule?.sqref && rule?.formula1);
-  if (!validRules.length) return "";
-
-  const entries = validRules
-    .map(
-      (rule) =>
-        `<dataValidation type="list" allowBlank="1" showErrorMessage="1" errorStyle="stop" sqref="${escapeXml(
-          rule.sqref,
-        )}"><formula1>${escapeXml(rule.formula1)}</formula1></dataValidation>`,
-    )
-    .join("");
-
-  return `<dataValidations count="${validRules.length}">${entries}</dataValidations>`;
-}
-
-function injectDataValidationToFirstWorksheet(xlsxBuffer, dataValidationXml, XLSX) {
-  if (!dataValidationXml) return xlsxBuffer;
-
-  const cfb = XLSX.CFB.read(xlsxBuffer, { type: "buffer" });
-  const sheetEntry = cfb.FileIndex.find((entry) => entry.name === "sheet1.xml");
-  if (!sheetEntry) return xlsxBuffer;
-
-  const sheetXml = Buffer.isBuffer(sheetEntry.content)
-    ? sheetEntry.content.toString("utf8")
-    : String(sheetEntry.content || "");
-
-  const cleanedXml = sheetXml.replace(
-    /<dataValidations[\s\S]*?<\/dataValidations>/g,
-    "",
-  );
-
-  const hasIgnoredErrors = /<ignoredErrors[\s\S]*?<\/ignoredErrors>/i.test(
-    cleanedXml,
-  );
-
-  const injectedXml = hasIgnoredErrors
-    ? cleanedXml.replace(/<ignoredErrors/i, `${dataValidationXml}<ignoredErrors`)
-    : cleanedXml.replace(/<\/worksheet>\s*$/i, `${dataValidationXml}</worksheet>`);
-
-  sheetEntry.content = Buffer.from(injectedXml, "utf8");
-  return XLSX.CFB.write(cfb, { type: "buffer", fileType: "zip" });
-}
-
-function parseMetaSheet(sheet, XLSX) {
+function parseMetaSheet(sheet) {
   if (!sheet) return new Map();
-  const rows = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: "",
-    blankrows: false,
-  });
+  const rows = worksheetToRowArrays(sheet, { blankrows: false });
   return new Map(
     rows
       .slice(1)
@@ -98,12 +48,8 @@ function parseMetaSheet(sheet, XLSX) {
   );
 }
 
-function parseTemplateRows(sheet, XLSX) {
-  const rows = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: "",
-    blankrows: false,
-  });
+function parseTemplateRows(sheet) {
+  const rows = worksheetToRowArrays(sheet, { blankrows: false });
 
   if (!rows.length) {
     throwBadRequest("Template không có dữ liệu", "ITEM_TEMPLATE_EMPTY");
@@ -192,8 +138,6 @@ export async function getItemImportTemplate() {
     });
   }
 
-  const XLSX = await loadXlsxLibrary();
-
   const firstUnitOfMeasure = unitOfMeasures[0]?.name || "Cái";
   const mainRows = [TEMPLATE_HEADERS];
   const firstCategory = categories[0];
@@ -204,14 +148,6 @@ export async function getItemImportTemplate() {
     "Nhập categoryName theo danh mục hiện tại",
   ]);
 
-  const mainSheet = XLSX.utils.aoa_to_sheet(mainRows);
-  mainSheet["!cols"] = [
-    { wch: 28 },
-    { wch: 26 },
-    { wch: 20 },
-    { wch: 36 },
-  ];
-
   const categoryRows = [
     ["categoryName", "sizeSystem"],
     ...categories.map((category) => [
@@ -219,15 +155,10 @@ export async function getItemImportTemplate() {
       category.sizes.map((item) => item.size.name).join(", "),
     ]),
   ];
-  const categorySheet = XLSX.utils.aoa_to_sheet(categoryRows);
-  categorySheet["!cols"] = [{ wch: 30 }, { wch: 42 }];
-
   const unitRows = [
     ["unitOfMeasureName"],
     ...unitOfMeasures.map((unit) => [unit.name]),
   ];
-  const unitSheet = XLSX.utils.aoa_to_sheet(unitRows);
-  unitSheet["!cols"] = [{ wch: 24 }];
 
   const metaRows = [
     ["key", "value"],
@@ -236,30 +167,31 @@ export async function getItemImportTemplate() {
     ["generatedAt", new Date().toISOString()],
     ["headerSignature", parseHeaderSignature(TEMPLATE_HEADERS)],
   ];
-  const metaSheet = XLSX.utils.aoa_to_sheet(metaRows);
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, mainSheet, ITEM_TEMPLATE_SHEET_NAME);
-  XLSX.utils.book_append_sheet(workbook, categorySheet, CATEGORY_SHEET_NAME);
-  XLSX.utils.book_append_sheet(workbook, unitSheet, UNIT_OF_MEASURE_SHEET_NAME);
-  XLSX.utils.book_append_sheet(workbook, metaSheet, TEMPLATE_META_SHEET_NAME);
-  workbook.Workbook = workbook.Workbook || {};
-  workbook.Workbook.Sheets = [
-    { name: ITEM_TEMPLATE_SHEET_NAME, Hidden: 0 },
-    { name: CATEGORY_SHEET_NAME, Hidden: 0 },
-    { name: UNIT_OF_MEASURE_SHEET_NAME, Hidden: 0 },
-    { name: TEMPLATE_META_SHEET_NAME, Hidden: 1 },
-  ];
-
-  let fileBuffer = XLSX.write(workbook, {
-    type: "buffer",
-    bookType: "xlsx",
-    compression: true,
+  const workbook = await createWorkbook();
+  const mainSheet = appendWorksheetFromRows(workbook, {
+    name: ITEM_TEMPLATE_SHEET_NAME,
+    rows: mainRows,
+    widths: [28, 26, 20, 36],
+  });
+  appendWorksheetFromRows(workbook, {
+    name: CATEGORY_SHEET_NAME,
+    rows: categoryRows,
+    widths: [30, 42],
+  });
+  appendWorksheetFromRows(workbook, {
+    name: UNIT_OF_MEASURE_SHEET_NAME,
+    rows: unitRows,
+    widths: [24],
+  });
+  appendWorksheetFromRows(workbook, {
+    name: TEMPLATE_META_SHEET_NAME,
+    rows: metaRows,
+    state: "hidden",
   });
 
   const categoryFormula = `${CATEGORY_SHEET_NAME}!$A$2:$A$${categories.length + 1}`;
   const unitFormula = `${UNIT_OF_MEASURE_SHEET_NAME}!$A$2:$A$${unitOfMeasures.length + 1}`;
-  const dataValidationXml = buildDataValidationXml([
+  applyListValidationRules(mainSheet, [
     {
       sqref: "B2:B1000",
       formula1: categoryFormula,
@@ -269,9 +201,8 @@ export async function getItemImportTemplate() {
       formula1: unitFormula,
     },
   ]);
-  fileBuffer = injectDataValidationToFirstWorksheet(fileBuffer, dataValidationXml, XLSX);
 
-  return fileBuffer;
+  return writeWorkbookToBuffer(workbook);
 }
 
 export async function importItemsByTemplate({ req }) {
@@ -290,15 +221,15 @@ export async function importItemsByTemplate({ req }) {
     );
   }
 
-  const XLSX = await loadXlsxLibrary();
-  const workbook = XLSX.read(files.file.content, { type: "buffer" });
-  const mainSheet = workbook.Sheets[ITEM_TEMPLATE_SHEET_NAME] || workbook.Sheets[workbook.SheetNames[0]];
+  const workbook = await readWorkbookFromBuffer(files.file.content);
+  const mainSheet =
+    workbook.getWorksheet(ITEM_TEMPLATE_SHEET_NAME) || workbook.worksheets[0];
   if (!mainSheet) {
     throwBadRequest("Không tìm thấy sheet dữ liệu mặt hàng", "ITEM_TEMPLATE_SHEET_NOT_FOUND");
   }
 
-  const metaSheet = workbook.Sheets[TEMPLATE_META_SHEET_NAME];
-  const meta = parseMetaSheet(metaSheet, XLSX);
+  const metaSheet = workbook.getWorksheet(TEMPLATE_META_SHEET_NAME);
+  const meta = parseMetaSheet(metaSheet);
   if (meta.get("templateType") !== TEMPLATE_TYPE || meta.get("templateVersion") !== TEMPLATE_VERSION) {
     throwBadRequest(
       "Template không hợp lệ hoặc không phải template hệ thống",
@@ -306,7 +237,7 @@ export async function importItemsByTemplate({ req }) {
     );
   }
 
-  const { signature, parsedRows } = parseTemplateRows(mainSheet, XLSX);
+  const { signature, parsedRows } = parseTemplateRows(mainSheet);
   const expectedHeaderSignature = meta.get("headerSignature");
   if (!expectedHeaderSignature || signature !== expectedHeaderSignature) {
     throwBadRequest(

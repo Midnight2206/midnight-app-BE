@@ -36,6 +36,56 @@ function formatMilitaryTypesFromAssignments(assignments) {
   };
 }
 
+function inferLegacyAssignmentStartYear({ military, referenceYear }) {
+  const candidateYears = [
+    Number(military?.initialCommissioningYear || 0),
+    new Date(military?.createdAt || 0).getFullYear(),
+    Number(referenceYear || 0),
+  ].filter((year) => Number.isInteger(year) && year > 0);
+
+  return candidateYears.length > 0
+    ? Math.min(...candidateYears)
+    : Number(referenceYear || new Date().getFullYear());
+}
+
+function buildLegacyCurrentAssignmentFallback({
+  military,
+  selectedTypeId,
+  scopeUnitId,
+  referenceYear,
+}) {
+  if (!Number.isInteger(selectedTypeId) || !Number.isInteger(Number(scopeUnitId))) {
+    return null;
+  }
+
+  const hasSelectedType = (military?.typeAssignments || []).some(
+    (item) => Number(item?.type?.id || 0) === Number(selectedTypeId),
+  );
+
+  if (!hasSelectedType || Number(military?.unitId || 0) !== Number(scopeUnitId)) {
+    return null;
+  }
+
+  return {
+    id: `legacy-${military.id}-${selectedTypeId}`,
+    militaryId: military.id,
+    typeId: selectedTypeId,
+    unitId: Number(scopeUnitId),
+    transferInYear: inferLegacyAssignmentStartYear({
+      military,
+      referenceYear,
+    }),
+    transferOutYear: null,
+    unit: military?.unit
+      ? {
+          id: military.unit.id,
+          name: military.unit.name,
+        }
+      : null,
+    isLegacyFallback: true,
+  };
+}
+
 export function createMilitaryListingService({ buildMilitarySearchNormalized }) {
   let hasSearchNormalizedColumnCache = null;
 
@@ -219,7 +269,6 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
       ...buildScopeWhereCondition({
         scopeUnitId,
         snapshotYear,
-        snapshotTypeId: selectedTypeId,
       }),
       ...(normalizedType
         ? {
@@ -503,7 +552,19 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
 
     const mappedMilitaries = militaries
       .map((military) => {
-        const assignmentHistory = Array.isArray(military.militaryUnits) ? military.militaryUnits : [];
+        const rawAssignmentHistory = Array.isArray(military.militaryUnits) ? military.militaryUnits : [];
+        const legacyFallbackAssignment =
+          rawAssignmentHistory.length === 0
+            ? buildLegacyCurrentAssignmentFallback({
+                military,
+                selectedTypeId,
+                scopeUnitId,
+                referenceYear: snapshotYear,
+              })
+            : null;
+        const assignmentHistory = legacyFallbackAssignment
+          ? [legacyFallbackAssignment]
+          : rawAssignmentHistory;
         const assignmentAnalysis = analyzeAssignmentHistory({
           assignments: assignmentHistory,
           year: snapshotYear,
@@ -517,6 +578,7 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
                 transferInYear: assignmentAnalysis.currentAssignment.transferInYear,
                 transferOutYear: assignmentAnalysis.currentAssignment.transferOutYear,
                 unit: assignmentAnalysis.currentAssignment.unit,
+                isLegacyFallback: Boolean(assignmentAnalysis.currentAssignment.isLegacyFallback),
               }
             : null;
         const {
@@ -588,10 +650,12 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
           ...typeInfo,
           assignedUnit: unitName,
           unitTransferInYear:
-            yearState.includeAnalysis.includeAssignment?.transferInYear ||
-            yearState.showAnalysis.showAssignment?.transferInYear ||
-            currentAssignment?.transferInYear ||
-            assignmentAnalysis.latestAssignment?.transferInYear ||
+            currentAssignment?.isLegacyFallback
+              ? null
+              : yearState.includeAnalysis.includeAssignment?.transferInYear ||
+                yearState.showAnalysis.showAssignment?.transferInYear ||
+                currentAssignment?.transferInYear ||
+                assignmentAnalysis.latestAssignment?.transferInYear ||
             null,
           unitTransferOutYear:
             yearState.showAnalysis.showAssignment?.transferOutYear ||
@@ -624,28 +688,7 @@ export function createMilitaryListingService({ buildMilitarySearchNormalized }) 
                   requestedAt: yearState.matchedRequest.requestedAt,
                 }
               : null,
-            includeAnalysis: {
-              hasAnyAssignment: yearState.includeAnalysis.hasAnyAssignment,
-              hasHistoricalTransferOut: yearState.includeAnalysis.hasHistoricalTransferOut,
-              hasTransferOutOnOrBeforeYear:
-                yearState.includeAnalysis.hasTransferOutOnOrBeforeYear,
-              currentAssignment: yearState.includeAnalysis.currentAssignment,
-              latestAssignment: yearState.includeAnalysis.latestAssignment,
-              latestTransferOutAssignment:
-                yearState.includeAnalysis.latestTransferOutAssignment,
-              assignments: yearState.includeAnalysis.assignments,
-            },
-            showAnalysis: {
-              hasAnyAssignment: yearState.showAnalysis.hasAnyAssignment,
-              hasHistoricalTransferOut: yearState.showAnalysis.hasHistoricalTransferOut,
-              hasTransferOutOnOrBeforeYear:
-                yearState.showAnalysis.hasTransferOutOnOrBeforeYear,
-              currentAssignment: yearState.showAnalysis.currentAssignment,
-              latestAssignment: yearState.showAnalysis.latestAssignment,
-              latestTransferOutAssignment:
-                yearState.showAnalysis.latestTransferOutAssignment,
-              assignments: yearState.showAnalysis.assignments,
-            },
+            isLegacyFallback: Boolean(legacyFallbackAssignment),
           },
           transferInDetail: transferInDetail
             ? {

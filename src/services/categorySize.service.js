@@ -53,6 +53,7 @@ class CategorySizeService {
     const categorySizes = await db.categorySize.findMany({
       where: {
         categoryId,
+        deletedAt: null,
         size: {
           deletedAt: null,
         },

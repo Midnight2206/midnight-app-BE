@@ -118,6 +118,86 @@ class CategoryController {
     });
   };
 
+  listAllocationServiceLifeRules = async (req, res) => {
+    const result = await inventoryService.listAllocationServiceLifeRules({
+      actor: req.user,
+      unitId: req.query.unitId,
+      typeId: req.query.typeId,
+      categoryId: req.query.categoryId,
+      status: req.query.status,
+      page: req.query.page,
+      limit: req.query.limit,
+    });
+    return res.success({
+      data: result,
+      message: "Get category allocation service life rules successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  createAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.createAllocationServiceLifeRule({
+      actor: req.user,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Create category allocation service life rule successfully",
+      statusCode: HTTP_CODES.CREATED,
+    });
+  };
+
+  getAllocationServiceLifeEditor = async (req, res) => {
+    const result = await inventoryService.getAllocationServiceLifeEditor({
+      actor: req.user,
+      unitId: req.query.unitId,
+      typeId: req.query.typeId,
+    });
+    return res.success({
+      data: result,
+      message: "Get category allocation service life editor successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  saveAllocationServiceLifeEditor = async (req, res) => {
+    const result = await inventoryService.saveAllocationServiceLifeEditor({
+      actor: req.user,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Save category allocation service life editor successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  updateAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.updateAllocationServiceLifeRule({
+      actor: req.user,
+      ruleId: req.params.ruleId,
+      body: req.body,
+    });
+    return res.success({
+      data: result,
+      message: "Update category allocation service life rule successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  deleteAllocationServiceLifeRule = async (req, res) => {
+    const result = await inventoryService.deleteAllocationServiceLifeRule({
+      actor: req.user,
+      ruleId: req.params.ruleId,
+      unitId: req.query.unitId,
+    });
+    return res.success({
+      data: result,
+      message: "Delete category allocation service life rule successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
   listVersions = async (req, res) => {
     const result = await inventoryService.listVersions({
       status: req.query.status,
@@ -311,10 +391,10 @@ class CategoryController {
       });
     }
 
-    const restoredCategory = await categoryService.restore({ categoryId: id });
+    await CategoryWithSizesService.restoreCategory({ categoryId: id });
 
     return res.success({
-      data: { category: restoredCategory },
+      data: null,
       message: "Category restored successfully",
       statusCode: HTTP_CODES.OK,
     });

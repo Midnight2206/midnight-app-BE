@@ -28,9 +28,84 @@ import {
 import { hasMilitaryTransferLogTable } from "#services/militaries/transfer-log.shared.js";
 import { resolveAssignedUnitNameOrThrow } from "#services/militaries/assigned-unit.js";
 
-export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear }) {
+function parseOptionalInteger(value, fieldName) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  return parseInteger(value, fieldName);
+}
+
+function getMilitaryTypeRows(military) {
+  return (military?.typeAssignments || [])
+    .map((entry) => entry?.type)
+    .filter((type) => Number.isInteger(Number(type?.id)) && Number(type.id) > 0);
+}
+
+function getMilitaryTypeIds(military) {
+  return getMilitaryTypeRows(military).map((type) => Number(type.id));
+}
+
+function inferTransferTypeId({
+  military,
+  parsedTypeId = null,
+  assignmentHistory = [],
+  typeCatalogRows = [],
+}) {
+  const militaryTypeIds = [...new Set(getMilitaryTypeIds(military))];
+  const explicitTypeIds = [
+    ...(Number.isInteger(parsedTypeId) ? [Number(parsedTypeId)] : []),
+    ...typeCatalogRows.map((item) => Number(item.id)),
+  ].filter((value) => Number.isInteger(value) && value > 0);
+  const uniqueExplicitTypeIds = [...new Set(explicitTypeIds)];
+
+  if (uniqueExplicitTypeIds.length > 1) {
+    throw new AppError({
+      message: "Mỗi lần điều chuyển chỉ được thao tác với một loại quân nhân",
+      statusCode: HTTP_CODES.BAD_REQUEST,
+      errorCode: "TRANSFER_MULTI_TYPE_NOT_SUPPORTED",
+    });
+  }
+
+  if (uniqueExplicitTypeIds.length === 1) {
+    const resolvedTypeId = uniqueExplicitTypeIds[0];
+    if (militaryTypeIds.length > 0 && !militaryTypeIds.includes(resolvedTypeId)) {
+      throw new AppError({
+        message: "Loại quân nhân được chọn không thuộc hồ sơ quân nhân này",
+        statusCode: HTTP_CODES.BAD_REQUEST,
+        errorCode: "TRANSFER_TYPE_NOT_ASSIGNED",
+      });
+    }
+    return resolvedTypeId;
+  }
+
+  const historyTypeIds = [
+    ...new Set(
+      (assignmentHistory || [])
+        .map((assignment) => Number(assignment?.typeId || 0))
+        .filter((value) => Number.isInteger(value) && value > 0),
+    ),
+  ];
+
+  if (historyTypeIds.length === 1) {
+    return historyTypeIds[0];
+  }
+
+  if (militaryTypeIds.length === 1) {
+    return militaryTypeIds[0];
+  }
+
+  throw new AppError({
+    message: "Quân nhân có nhiều loại quân nhân, vui lòng chọn rõ type cần điều chuyển",
+    statusCode: HTTP_CODES.BAD_REQUEST,
+    errorCode: "TRANSFER_TYPE_REQUIRED",
+  });
+}
+
+export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear, typeId }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
   const parsedYear = parseInteger(transferOutYear, "transferOutYear");
+  const parsedTypeId = parseOptionalInteger(typeId, "typeId");
 
   const [military, assignmentHistory] = await Promise.all([
     prisma.military.findFirst({
@@ -42,6 +117,25 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
         id: true,
         fullname: true,
         militaryCode: true,
+        typeAssignments: {
+          where: {
+            type: {
+              deletedAt: null,
+            },
+          },
+          orderBy: {
+            typeId: "asc",
+          },
+          select: {
+            type: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+              },
+            },
+          },
+        },
       },
     }),
     listAssignmentHistory({
@@ -51,9 +145,15 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
       scopeUnitId: actorUnitId,
     }),
   ]);
+  const resolvedTypeId = inferTransferTypeId({
+    military,
+    parsedTypeId,
+    assignmentHistory,
+  });
   const assignmentAnalysis = analyzeAssignmentHistory({
     assignments: assignmentHistory,
     year: parsedYear,
+    typeId: resolvedTypeId,
     scopeUnitId: actorUnitId,
     strictEnd: true,
   });
@@ -110,6 +210,7 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
         select: {
           id: true,
           militaryId: true,
+          typeId: true,
           unitId: true,
           transferInYear: true,
           transferOutYear: true,
@@ -124,14 +225,18 @@ export async function cutMilitaryAssurance({ actor, militaryId, transferOutYear 
       fullname: military.fullname,
       militaryCode: military.militaryCode,
     },
+    type:
+      getMilitaryTypeRows(military).find((type) => Number(type.id) === Number(resolvedTypeId)) ||
+      null,
     unit: activeAssignment?.unit || null,
     assignment: updated,
   };
 }
 
-export async function receiveMilitaryAssurance({ actor, militaryCode, transferInYear }) {
+export async function receiveMilitaryAssurance({ actor, militaryCode, transferInYear, typeId }) {
   const actorUnitId = assertSizeRegistrationAccess(actor);
   const parsedYear = parseInteger(transferInYear, "transferInYear");
+  const parsedTypeId = parseOptionalInteger(typeId, "typeId");
   const normalizedCode = String(militaryCode || "").trim();
 
   if (!normalizedCode) {
@@ -152,6 +257,25 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
       fullname: true,
       militaryCode: true,
       unitId: true,
+      typeAssignments: {
+        where: {
+          type: {
+            deletedAt: null,
+          },
+        },
+        orderBy: {
+          typeId: "asc",
+        },
+        select: {
+          type: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+            },
+          },
+        },
+      },
     },
   });
 
@@ -166,9 +290,15 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
     db: prisma,
     militaryId: military.id,
   });
+  const resolvedTypeId = inferTransferTypeId({
+    military,
+    parsedTypeId,
+    assignmentHistory,
+  });
   const activeAssignment = analyzeAssignmentHistory({
     assignments: assignmentHistory,
     year: parsedYear,
+    typeId: resolvedTypeId,
     strictEnd: true,
   }).includeAssignment;
 
@@ -220,6 +350,7 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
     await ensureNoOverlapTransfer({
       tx,
       militaryId: military.id,
+      typeId: resolvedTypeId,
       transferInYear: parsedYear,
       transferOutYear: null,
     });
@@ -227,12 +358,14 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
     const createdAssignment = await tx.militaryUnit.create({
       data: {
         militaryId: military.id,
+        typeId: resolvedTypeId,
         unitId: actorUnitId,
         transferInYear: parsedYear,
       },
       select: {
         id: true,
         militaryId: true,
+        typeId: true,
         unitId: true,
         transferInYear: true,
         transferOutYear: true,
@@ -258,6 +391,9 @@ export async function receiveMilitaryAssurance({ actor, militaryCode, transferIn
       fullname: military.fullname,
       militaryCode: military.militaryCode,
     },
+    type:
+      getMilitaryTypeRows(military).find((type) => Number(type.id) === Number(resolvedTypeId)) ||
+      null,
     unit: targetUnit,
     assignment: result,
   };
@@ -268,6 +404,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
   const canWriteTransferLog = await hasMilitaryTransferLogTable();
 
   const militaryCode = String(payload?.militaryCode || "").trim();
+  const parsedTypeId = parseOptionalInteger(payload?.typeId, "typeId");
   const transferYear = parseInteger(payload?.transferYear, "transferYear");
   const fromUnitId = payload?.fromUnitId === null ? null : parseInteger(payload?.fromUnitId, "fromUnitId");
   const toUnitId = payload?.toUnitId === null ? null : parseInteger(payload?.toUnitId, "toUnitId");
@@ -468,14 +605,18 @@ export async function transferMilitaryAssurance({ actor, payload }) {
         });
       }
 
-      await tx.militaryUnit.create({
-        data: {
-          militaryId: created.id,
-          unitId: toUnitId,
-          transferInYear: transferYear,
-          transferOutYear: null,
-        },
-      });
+      if (typeCatalogRows.length > 0) {
+        await tx.militaryUnit.createMany({
+          data: typeCatalogRows.map((item) => ({
+            militaryId: created.id,
+            typeId: item.id,
+            unitId: toUnitId,
+            transferInYear: transferYear,
+            transferOutYear: null,
+          })),
+          skipDuplicates: true,
+        });
+      }
 
       if (canWriteTransferLog) {
         await tx.militaryTransferLog.create({
@@ -495,6 +636,11 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       return {
         action: "RECEIVE_FROM_VOID",
         military: created,
+        types: typeCatalogRows.map((item) => ({
+          id: item.id,
+          code: item.code,
+          name: item.name || null,
+        })),
         fromUnit,
         toUnit,
       };
@@ -504,9 +650,20 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       db: tx,
       militaryId: military.id,
     });
+    const resolvedTypeId = inferTransferTypeId({
+      military,
+      parsedTypeId,
+      assignmentHistory,
+      typeCatalogRows,
+    });
+    const resolvedType =
+      getMilitaryTypeRows(military).find((type) => Number(type.id) === Number(resolvedTypeId)) ||
+      typeCatalogRows.find((type) => Number(type.id) === Number(resolvedTypeId)) ||
+      null;
     const assignmentAnalysis = analyzeAssignmentHistory({
       assignments: assignmentHistory,
       year: transferYear,
+      typeId: resolvedTypeId,
       strictEnd: true,
     });
     const activeAssignment = assignmentAnalysis.includeAssignment;
@@ -521,7 +678,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
 
     if (!fromUnitId && activeAssignment) {
       throw new AppError({
-        message: "Quân nhân đang có đơn vị bảo đảm, không thể nhận từ hư vô",
+        message: "Loại quân nhân này đang có đơn vị bảo đảm, không thể nhận từ hư vô",
         statusCode: HTTP_CODES.CONFLICT,
         errorCode: "ACTIVE_ASSIGNMENT_EXISTS",
       });
@@ -550,6 +707,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       await ensureNoOverlapTransfer({
         tx,
         militaryId: military.id,
+        typeId: resolvedTypeId,
         transferInYear: transferYear,
         transferOutYear: null,
       });
@@ -557,6 +715,7 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       await tx.militaryUnit.create({
         data: {
           militaryId: military.id,
+          typeId: resolvedTypeId,
           unitId: toUnitId,
           transferInYear: transferYear,
           transferOutYear: null,
@@ -622,17 +781,24 @@ export async function transferMilitaryAssurance({ actor, payload }) {
       });
     }
 
-    return {
-      action:
-        fromUnitId && toUnitId
-          ? "TRANSFER_UNIT"
-          : fromUnitId && !toUnitId
-            ? "CUT_TO_VOID"
-            : "RECEIVE_FROM_VOID",
-      military,
-      fromUnit,
-      toUnit,
-    };
+      return {
+        action:
+          fromUnitId && toUnitId
+            ? "TRANSFER_UNIT"
+            : fromUnitId && !toUnitId
+              ? "CUT_TO_VOID"
+              : "RECEIVE_FROM_VOID",
+        military,
+        type: resolvedType
+          ? {
+              id: resolvedType.id,
+              code: resolvedType.code,
+              name: resolvedType.name || null,
+            }
+          : null,
+        fromUnit,
+        toUnit,
+      };
   });
 
   return result;

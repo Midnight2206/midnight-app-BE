@@ -36,6 +36,12 @@ export const standardIdParamSchema = z.object({
   }),
 });
 
+export const serviceLifeRuleIdParamSchema = z.object({
+  params: z.object({
+    ruleId: z.coerce.number().int().positive(),
+  }),
+});
+
 export const warehouseIdParamSchema = z.object({
   params: z.object({
     warehouseId: z.coerce.number().int().positive(),
@@ -207,6 +213,13 @@ const standardConditionSchema = z.object({
   issueYearOffset: z.coerce.number().int().min(-50).max(50).optional(),
 });
 
+const allocationServiceLifeRuleConditionSchema = z.object({
+  gender: z.enum(["ANY", "MALE", "FEMALE"]).optional(),
+  rankGroup: z
+    .enum(["ANY", "CAP_UY", "CAP_TA", "CAP_TUONG", "HSQ_BS"])
+    .optional(),
+});
+
 export const createAllocationStandardSchema = z.object({
   body: z.object({
     unitId: z.coerce.number().int().positive().optional(),
@@ -217,6 +230,71 @@ export const createAllocationStandardSchema = z.object({
     standardCondition: standardConditionSchema.nullable().optional(),
     itemQuantities: z.array(standardItemQuantitySchema).max(500).optional(),
     itemRules: z.array(standardItemRuleSchema).max(500).optional(),
+  }),
+});
+
+export const listAllocationServiceLifeRulesSchema = z.object({
+  query: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+    typeId: z.coerce.number().int().positive().optional(),
+    categoryId: z.coerce.number().int().positive().optional(),
+    status: z.enum(["active", "deleted"]).optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().optional(),
+  }),
+});
+
+export const createAllocationServiceLifeRuleSchema = z.object({
+  body: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+    typeId: z.coerce.number().int().positive(),
+    categoryId: z.coerce.number().int().positive(),
+    serviceLifeYears: z.coerce.number().int().positive().max(100),
+    gender: allocationServiceLifeRuleConditionSchema.shape.gender,
+    rankGroup: allocationServiceLifeRuleConditionSchema.shape.rankGroup,
+  }),
+});
+
+export const updateAllocationServiceLifeRuleSchema = z.object({
+  params: z.object({
+    ruleId: z.coerce.number().int().positive(),
+  }),
+  body: z
+    .object({
+      unitId: z.coerce.number().int().positive().optional(),
+      typeId: z.coerce.number().int().positive().optional(),
+      categoryId: z.coerce.number().int().positive().optional(),
+      serviceLifeYears: z.coerce.number().int().positive().max(100).optional(),
+      gender: allocationServiceLifeRuleConditionSchema.shape.gender,
+      rankGroup: allocationServiceLifeRuleConditionSchema.shape.rankGroup,
+    })
+    .refine((body) => Object.keys(body).length > 0, {
+      message: "Phải có ít nhất một trường để cập nhật",
+      path: ["typeId"],
+    }),
+});
+
+export const getAllocationServiceLifeEditorSchema = z.object({
+  query: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+    typeId: z.coerce.number().int().positive(),
+  }),
+});
+
+export const saveAllocationServiceLifeEditorSchema = z.object({
+  body: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+    typeId: z.coerce.number().int().positive(),
+    assignments: z
+      .array(
+        z.object({
+          categoryId: z.coerce.number().int().positive(),
+          serviceLifeYears: z.coerce.number().int().positive().max(100),
+          gender: allocationServiceLifeRuleConditionSchema.shape.gender,
+          rankGroup: allocationServiceLifeRuleConditionSchema.shape.rankGroup,
+        }),
+      )
+      .max(1000),
   }),
 });
 
@@ -323,6 +401,7 @@ export const getAllocationEligibleItemsSchema = z.object({
     subjectId: z.coerce.number().int().positive(),
     militaryId: z.string().trim().min(1),
     categoryId: z.coerce.number().int().positive().optional(),
+    typeId: z.coerce.number().int().positive().optional(),
     asOfDate: z.string().datetime().optional(),
     asOfYear: z.coerce.number().int().min(1900).max(3000).optional(),
     gender: z.enum(["MALE", "FEMALE"]).optional(),
@@ -335,6 +414,7 @@ export const createAllocationIssueLogSchema = z.object({
     warehouseId: z.coerce.number().int().positive(),
     militaryId: z.string().trim().min(1),
     standardId: z.coerce.number().int().positive(),
+    typeId: z.coerce.number().int().positive().optional(),
     issuedAt: z.string().datetime().optional(),
     note: z.string().trim().max(191).optional(),
     items: z
@@ -353,4 +433,26 @@ export const allocationIssueVoucherIdParamSchema = z.object({
   params: z.object({
     voucherId: z.string().trim().min(1),
   }),
+});
+
+export const listAllocationIssueHistorySchema = z.object({
+  query: z.object({
+    unitId: z.coerce.number().int().positive().optional(),
+    militaryId: z.string().trim().min(1),
+    categoryId: z.coerce.number().int().positive().optional(),
+    itemId: z.coerce.number().int().positive().optional(),
+    yearFrom: z.coerce.number().int().min(1900).max(3000).optional(),
+    yearTo: z.coerce.number().int().min(1900).max(3000).optional(),
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().optional(),
+  }).refine(
+    (query) =>
+      query.yearFrom === undefined ||
+      query.yearTo === undefined ||
+      query.yearTo >= query.yearFrom,
+    {
+      message: "yearTo phải lớn hơn hoặc bằng yearFrom",
+      path: ["yearTo"],
+    },
+  ),
 });

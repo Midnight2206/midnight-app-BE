@@ -364,7 +364,10 @@ class CategoryWithSizesService {
             },
           },
           sizes: {
-            where: { size: { deletedAt: null } },
+            where: {
+              deletedAt: null,
+              size: { deletedAt: null },
+            },
             include: { size: true },
           },
         },

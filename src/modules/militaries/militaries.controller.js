@@ -260,6 +260,78 @@ class MilitariesController {
     });
   };
 
+  getMyPersonalLedger = async (req, res) => {
+    const result = await militariesService.getMyPersonalLedger({
+      actor: req.user,
+      query: req.query,
+    });
+
+    return res.success({
+      data: result,
+      message: "Get personal equipment ledger successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  getMilitaryPersonalLedger = async (req, res) => {
+    const result = await militariesService.getMilitaryPersonalLedger({
+      actor: req.user,
+      militaryId: req.params.militaryId,
+      query: req.query,
+    });
+
+    return res.success({
+      data: result,
+      message: "Get military personal equipment ledger successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  updateMilitaryFromPersonalLedger = async (req, res) => {
+    const result = await militariesService.updateMilitaryFromPersonalLedger({
+      actor: req.user,
+      militaryId: req.params.militaryId,
+      body: req.body,
+    });
+
+    return res.success({
+      data: result,
+      message: "Update military from personal ledger successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
+  downloadAllocationModeBaselineTemplate = async (req, res) => {
+    const { fileName, buffer } = await militariesService.getAllocationModeBaselineTemplate({
+      actor: req.user,
+      unitId: req.query.unitId,
+    });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"`,
+    );
+
+    return res.status(HTTP_CODES.OK).send(buffer);
+  };
+
+  importAllocationModeBaselineTemplate = async (req, res) => {
+    const result = await militariesService.importAllocationModeBaselineTemplate({
+      actor: req.user,
+      req,
+    });
+
+    return res.success({
+      data: result,
+      message: "Import allocation mode baseline successfully",
+      statusCode: HTTP_CODES.OK,
+    });
+  };
+
   updateMilitaryRegistrations = async (req, res) => {
     const result = await militariesService.updateMilitaryRegistrations({
       actor: req.user,
@@ -280,6 +352,7 @@ class MilitariesController {
       actor: req.user,
       militaryId: req.params.militaryId,
       transferOutYear: req.body.transferOutYear,
+      typeId: req.body.typeId,
     });
 
     return res.success({
@@ -294,6 +367,7 @@ class MilitariesController {
       actor: req.user,
       militaryCode: req.body.militaryCode,
       transferInYear: req.body.transferInYear,
+      typeId: req.body.typeId,
     });
 
     return res.success({

@@ -46,6 +46,12 @@ import {
   deleteMilitaryType,
   listMilitaryTypes,
 } from "#services/militaries/type-catalog.js";
+import { getPersonalEquipmentLedger } from "#services/militaries/personal-ledger.js";
+import {
+  getAllocationModeBaselineTemplate,
+  importAllocationModeBaselineTemplate,
+  updateMilitaryFromPersonalLedger,
+} from "#services/militaries/personal-ledger-admin.js";
 // Snapshot logic removed; history-only model is used.
 
 const listingService = createMilitaryListingService({
@@ -136,21 +142,38 @@ class MilitariesService {
   getMilitaryRegistrations = async ({ actor, militaryId, year }) =>
     getMilitaryRegistrations({ actor, militaryId, year });
 
+  getMyPersonalLedger = async ({ actor, query }) =>
+    getPersonalEquipmentLedger({ actor, query });
+
+  getMilitaryPersonalLedger = async ({ actor, militaryId, query }) =>
+    getPersonalEquipmentLedger({ actor, militaryId, query });
+
+  updateMilitaryFromPersonalLedger = async ({ actor, militaryId, body }) =>
+    updateMilitaryFromPersonalLedger({ actor, militaryId, body });
+
+  getAllocationModeBaselineTemplate = async ({ actor, unitId }) =>
+    getAllocationModeBaselineTemplate({ actor, unitId });
+
+  importAllocationModeBaselineTemplate = async ({ actor, req }) =>
+    importAllocationModeBaselineTemplate({ actor, req });
+
   updateMilitaryRegistrations = async ({ actor, militaryId, year, registrations }) =>
     updateMilitaryRegistrations({ actor, militaryId, year, registrations });
 
-  cutMilitaryAssurance = async ({ actor, militaryId, transferOutYear }) =>
+  cutMilitaryAssurance = async ({ actor, militaryId, transferOutYear, typeId }) =>
     cutMilitaryAssurance({
       actor,
       militaryId,
       transferOutYear,
+      typeId,
     });
 
-  receiveMilitaryAssurance = async ({ actor, militaryCode, transferInYear }) =>
+  receiveMilitaryAssurance = async ({ actor, militaryCode, transferInYear, typeId }) =>
     receiveMilitaryAssurance({
       actor,
       militaryCode,
       transferInYear,
+      typeId,
     });
 
   transferMilitaryAssurance = async ({ actor, body }) =>

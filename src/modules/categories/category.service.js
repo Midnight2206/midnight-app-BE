@@ -310,6 +310,7 @@ class CategoryService {
         },
         sizes: {
           where: {
+            deletedAt: null,
             size: {
               deletedAt: null,
             },

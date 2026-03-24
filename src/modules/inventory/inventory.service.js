@@ -36,18 +36,25 @@ import {
 } from "#services/inventory/item-variant.service.js";
 import {
   createAllocationIssueLog,
+  getAllocationServiceLifeEditor,
+  createAllocationServiceLifeRule,
   createAllocationStandard,
   createAllocationSubject,
+  deleteAllocationServiceLifeRule,
   deleteAllocationStandard,
   deleteAllocationSubject,
   ensureDefaultAllocationSubjects,
   getAllocationIssueVoucherById,
   getAllocationEligibleItems,
+  listAllocationIssueHistory,
+  listAllocationServiceLifeRules,
   listAllocationSubjectMemberships,
   listAllocationIssueVouchers,
+  saveAllocationServiceLifeEditor,
   listAllocationStandards,
   listAllocationSubjects,
   setAllocationSubjectMemberships,
+  updateAllocationServiceLifeRule,
   updateAllocationStandard,
 } from "#services/inventory/allocation-standard.service.js";
 import {
@@ -110,6 +117,24 @@ class InventoryService {
   createAllocationStandard = async ({ actor, body }) =>
     createAllocationStandard({ actor, body });
 
+  listAllocationServiceLifeRules = async ({ actor, ...query }) =>
+    listAllocationServiceLifeRules({ actor, ...query });
+
+  createAllocationServiceLifeRule = async ({ actor, body }) =>
+    createAllocationServiceLifeRule({ actor, body });
+
+  getAllocationServiceLifeEditor = async ({ actor, ...query }) =>
+    getAllocationServiceLifeEditor({ actor, ...query });
+
+  saveAllocationServiceLifeEditor = async ({ actor, body }) =>
+    saveAllocationServiceLifeEditor({ actor, body });
+
+  updateAllocationServiceLifeRule = async ({ actor, ruleId, body }) =>
+    updateAllocationServiceLifeRule({ actor, ruleId, body });
+
+  deleteAllocationServiceLifeRule = async ({ actor, ruleId, unitId }) =>
+    deleteAllocationServiceLifeRule({ actor, ruleId, unitId });
+
   updateAllocationStandard = async ({ actor, standardId, body }) =>
     updateAllocationStandard({ actor, standardId, body });
 
@@ -124,6 +149,9 @@ class InventoryService {
 
   listAllocationIssueVouchers = async ({ actor, ...query }) =>
     listAllocationIssueVouchers({ actor, ...query });
+
+  listAllocationIssueHistory = async ({ actor, ...query }) =>
+    listAllocationIssueHistory({ actor, ...query });
 
   getAllocationIssueVoucherById = async ({ actor, voucherId, unitId }) =>
     getAllocationIssueVoucherById({ actor, voucherId, unitId });
@@ -234,7 +262,8 @@ class InventoryService {
     );
     const defaultSubjectNormalizedValues = Array.from(defaultSubjectOrder.keys());
 
-    const [unitOfMeasures, versions, colors, allocationSubjectsRaw] = await Promise.all([
+    const [unitOfMeasures, versions, colors, allocationSubjectsRaw, militaryTypes] =
+      await Promise.all([
       prisma.unitOfMeasure.findMany({
         where: { deletedAt: null },
         orderBy: [{ name: "asc" }, { id: "asc" }],
@@ -274,7 +303,18 @@ class InventoryService {
           unitId: true,
         },
       }),
-    ]);
+      prisma.militaryTypeCatalog.findMany({
+        where: {
+          deletedAt: null,
+        },
+        orderBy: [{ code: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          code: true,
+          name: true,
+        },
+      }),
+      ]);
 
     const allocationSubjects = allocationSubjectsRaw
       .map((subject) => {
@@ -303,6 +343,7 @@ class InventoryService {
       versions,
       colors,
       allocationSubjects,
+      militaryTypes,
     };
   };
 }
